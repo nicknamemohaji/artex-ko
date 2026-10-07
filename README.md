@@ -78,7 +78,49 @@ ARTEX 는 **자신이 소유하거나 서면으로 명시적 허가를 받은 �
   <sub><b>대화</b> — 자율 실행 중에 사람이 끼어들어 힌트를 주고, 에이전트가 공격 체인을 한국어로 요약합니다.</sub>
 </p>
 
-원본(중국어 UI) 전체 화면은 [`README.zh.md`](README.zh.md#截图预览) 에서 볼 수 있습니다.
+### 원본 화면 전체 미리 보기
+
+전체 상호작용은 [온라인 데모](https://artex-demo.vercel.app/)에서 확인할 수 있습니다.
+
+| 대시보드(개요 / Token 소비 / 활동 흐름) | 작업 목록 |
+| :---: | :---: |
+| ![대시보드](screenshots/dashboard.png) | ![작업](screenshots/tasks.png) |
+
+| 작업 실행 과정(세션 / 도구 호출) | 탐색 경로 |
+| :---: | :---: |
+| ![실행 과정](screenshots/sessions.png) | ![탐색 경로](screenshots/graph.png) |
+
+| 취약점 | 자산 |
+| :---: | :---: |
+| ![취약점](screenshots/findings.png) | ![자산](screenshots/assets.png) |
+
+| 자산 커버리지 그래프(힘 기반 배치 · 테스트 완료 강조 · 노드 접기/펼치기) |
+| :---: |
+| ![자산 커버리지 그래프](screenshots/assets_test.png) |
+
+| 트래픽 기록 | 사람 개입 대화 |
+| :---: | :---: |
+| ![트래픽](screenshots/traffic.png) | ![대화](screenshots/chat.png) |
+
+| 에이전트 관리 | LLM 설정 |
+| :---: | :---: |
+| ![에이전트](screenshots/agents.png) | ![LLM](screenshots/llm.png) |
+
+| 가로채기 승인 | 백엔드 로그 |
+| :---: | :---: |
+| ![가로채기](screenshots/intercept.png) | ![로그](screenshots/logs.png) |
+
+### 승인 기록 상세
+
+전역 "승인 기록", 작업 안의 "가로채기 승인", 대화의 승인 카드는 모두 펼쳐서 상세 내용을 볼 수 있습니다. 표시 구조는 [AegisHook의 승인 상세 컴포넌트](https://github.com/RuoJi6/AegisHook/blob/main/web/src/components/CallDetail.vue)를 참고했으며 ARTEX의 컴포넌트와 테마를 그대로 사용합니다.
+
+### 자산 동기화(ScopeSentry)
+
+[ScopeSentry](https://github.com/Autumn-27/ScopeSentry)에서 자산 데이터를 직접 동기화할 수 있습니다.
+
+- "자산 동기화" 페이지에 ScopeSentry 주소와 API Key를 입력해 데이터 소스를 연결합니다.
+- 프로젝트 또는 작업 단위로 동기화할 대상과 자산 유형(도메인 / 서브도메인 / IP / 포트 / 사이트 / 엔드포인트 등)을 선택합니다.
+- 한 번에 가져온 뒤 회사별 자산 범위로 합쳐 ARTEX 자산 그래프에서 에이전트가 바로 탐색하도록 합니다.
 
 ---
 
@@ -98,21 +140,100 @@ docker compose up -d --build  # 한국어판 이미지 빌드 후 PostgreSQL 과
 
 한국어판 이미지에는 자주 쓰는 도구(ripgrep·curl·vim·npm·nmap 등)가 들어 있습니다. `./skills` 와 `./data` 는 바인드 마운트로 호스트에 남아 컨테이너를 다시 만들어도 보존됩니다. 소스를 갱신한 뒤에는 `docker compose up -d --build artex` 로 이미지를 다시 빌드하십시오. 한국어판 컨테이너는 `ko` 접두 버전으로 빌드되어 UI 의 바이너리 원클릭 업데이트가 비활성화됩니다.
 
-### 그 밖의 설치 방법
+### 설치 스크립트
 
-원본 저장소는 설치 스크립트(`./install.sh`), 사전 컴파일 바이너리(Releases), 소스 단일 바이너리 컴파일 등 여러 방법을 제공합니다. 명령과 절차는 [`README.zh.md`](README.zh.md#安装)의 "安装"(설치) 절에 정리되어 있으며, 아래 핵심만 옮깁니다.
+```bash
+git clone https://github.com/jiwoochris/artex-ko.git
+cd artex-ko
+./install.sh
+```
 
-- **설치 스크립트:** `./install.sh` 를 실행하면 Docker 감지·설치 후 "① 전부 Docker" 또는 "② 로컬 컴파일 실행"을 고르게 합니다.
-- **소스에서 단일 바이너리 컴파일:**
+스크립트는 Docker를 감지하거나 설치한 뒤, **① 전부 Docker** 또는 **② 로컬 컴파일 실행**을 선택하게 합니다. Docker 방식은 PostgreSQL 비밀번호를 받아 `.env`를 만들고 Compose를 기동합니다. 로컬 방식은 기존 DB 연결 또는 Docker PostgreSQL을 선택하고 `config.json`을 만든 뒤 프런트엔드를 내장한 Go 바이너리를 컴파일해 실행합니다.
 
-  ```bash
-  cd web && npm ci && npm run build:static && cd ..   # 1) 프런트엔드 정적 빌드
-  mkdir -p server/webui && cp -r web/out server/webui/dist   # 2) 내장 디렉터리로 복사
-  CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex   # 3) 프런트 내장 컴파일
-  ./start.sh                                          # → http://localhost:8787
-  ```
+### 사전 컴파일 바이너리(Releases)
 
-> 실행은 `./artex` 를 직접 돌리지 말고 `start.sh`(Windows 는 `start.bat`)로 하십시오. 이 스크립트는 종료 코드에 따라 프로그램을 다시 띄우는 감시자이고, UI 의 "원클릭 업데이트"도 이 스크립트가 처리합니다.
+[원본 Releases](https://github.com/Autumn-27/ARTEX/releases)에서 플랫폼에 맞는 zip을 받아 압축을 풀면 `artex`, `start.sh`(Windows는 `start.bat`), `skills/`, `config.example.json`이 나옵니다. 원본 릴리스는 한국어판 변경을 포함하지 않습니다.
+
+```bash
+cp config.example.json config.json   # database 연결 설정
+./start.sh                           # → http://localhost:8787
+```
+
+`./artex`를 직접 실행하지 말고 `start.sh` 또는 `start.bat`로 실행하십시오. 이 감시 스크립트가 종료 코드에 따라 프로세스를 다시 띄우며, 화면의 원클릭 업데이트도 이 경로를 사용합니다. 백그라운드 실행 예시는 `nohup ./start.sh >artex.log 2>&1 &`입니다.
+
+### 소스에서 단일 바이너리 컴파일
+
+```bash
+cd web && npm ci && npm run build:static && cd ..   # 1) 프런트엔드 정적 빌드
+mkdir -p server/webui && cp -r web/out server/webui/dist   # 2) 내장 디렉터리로 복사
+CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex   # 3) 프런트 내장 컴파일
+./start.sh                                          # → http://localhost:8787
+```
+
+### 크로스 플랫폼 릴리스 압축 파일 빌드
+
+`build.sh`는 프런트엔드를 빌드해 내장하고 Go linker로 디버그 정보를 제거한 뒤 배포 파일을 zip으로 묶습니다. 릴리스 모드는 기본적으로 Linux amd64/arm64, macOS amd64/arm64, Windows amd64를 생성합니다.
+
+```bash
+./build.sh --release
+# 결과: dist/artex-<version>-*.zip
+```
+
+UPX 자체 압축 바이너리는 일부 Linux 커널·가상화 환경·보안 정책과 호환되지 않아 기본으로 사용하지 않습니다. 필요하면 다음처럼 대상을 제한하거나 호환성을 확인한 뒤 UPX를 명시적으로 켤 수 있습니다.
+
+```bash
+ARTEX_TARGETS=linux/amd64,windows/amd64 ./build.sh --release
+./build.sh --target linux/amd64 --upx
+```
+
+---
+
+## 업데이트
+
+업데이트는 프로그램만 교체하며 PostgreSQL의 `pgdata`, `./data`, `./skills`는 유지합니다. DB 스키마는 시작할 때 `schema.sql`을 멱등 실행하므로 별도 마이그레이션 명령이 필요하지 않습니다. 그래도 업데이트 전에 DB와 `./data`를 백업하십시오.
+
+### 화면에서 원클릭 업데이트
+
+"시스템 설정"의 "버전과 업데이트" 카드에서 새 버전을 확인하고 설치할 수 있습니다. 현재 플랫폼의 배포 파일을 내려받아 `SHA256SUMS`를 확인하고, `-h`로 새 바이너리를 시험한 뒤 `artex.new`로 준비합니다. 이후 프로그램이 종료되면 `start.sh` 또는 `start.bat`가 다시 실행해 교체를 완료합니다.
+
+- 검증이나 시험 실행이 실패하면 준비 파일을 버리고 현재 버전을 계속 실행합니다.
+- 새 버전이 세 번 연속 시작하지 못하면 `artex.old`로 자동 복구합니다. 실패한 바이너리는 `artex.failed`로 남습니다.
+- 이전 버전으로 수동 복구할 수 있지만 DB 구조는 되돌아가지 않습니다.
+- 업데이트는 실행 중인 작업을 끊으므로 작업이 없을 때 수행하십시오.
+- `dev` 또는 `git describe` 접미사가 붙은 개발 빌드는 원클릭 업데이트를 허용하지 않습니다.
+- GitHub 접근에 프록시가 필요하면 같은 페이지의 전역 프록시를 설정하십시오. 업데이트는 HTTPS와 GitHub 허용 도메인만 사용합니다.
+
+한국어 Docker 빌드는 버전에 `ko` 접두사가 붙어 원본 중국어 릴리스가 덮어쓰지 못하게 원클릭 업데이트가 비활성화됩니다. 소스를 갱신하고 이미지를 다시 빌드해 업데이트하십시오.
+
+### 업데이트 스크립트
+
+```bash
+cd artex-ko
+./update.sh
+```
+
+스크립트는 선택적으로 `git pull`을 실행한 뒤 Docker 이미지 재빌드 또는 로컬 바이너리 재컴파일을 선택하게 합니다.
+
+### Docker Compose 수동 업데이트
+
+```bash
+cd artex-ko
+git pull
+docker compose up -d --build artex
+docker image prune -f          # 선택: 사용하지 않는 이전 이미지 정리
+```
+
+### 바이너리 또는 소스 수동 업데이트
+
+사전 컴파일 파일을 쓸 때는 기존 프로세스를 멈추고 새 `artex`와 `skills/`를 덮어쓴 뒤 `./start.sh`를 실행합니다. `config.json`과 `data/`는 보존하십시오. 소스 빌드는 다음 절차를 사용합니다.
+
+```bash
+git pull
+cd web && npm ci && npm run build:static && cd ..
+mkdir -p server/webui && cp -r web/out server/webui/dist
+CGO_ENABLED=0 go build -tags embedui -o artex ./cmd/artex
+# ./start.sh 재시작
+```
 
 ---
 
@@ -150,7 +271,30 @@ docker compose up -d --build  # 한국어판 이미지 빌드 후 PostgreSQL 과
 
 프런트엔드와 API/SSE 모두 같은 백엔드 포트(기본 `:8787`)가 제공하고, 실시간 활동 스트림은 기본적으로 **동일 출처(same-origin)** 로 연결합니다. 따라서 `NEXT_PUBLIC_SSE_BASE` 를 따로 설정할 필요 없이, 공개망에는 443 만 열고 8787 은 내부망에 두면 됩니다.
 
-SSE 는 장시간 연결로 이벤트를 계속 밀어 주므로, 리버스 프록시에서 **버퍼링을 반드시 꺼야** 합니다. 끄지 않으면 브라우저가 연결은 되지만 이벤트를 못 받습니다(활동 스트림이 계속 로딩 상태로 보임). Nginx 설정 예시는 [`README.zh.md`](README.zh.md#反向代理部署https--只开放-443)에 있습니다.
+SSE 는 장시간 연결로 이벤트를 계속 밀어 주므로, 리버스 프록시에서 **버퍼링을 반드시 꺼야** 합니다. 끄지 않으면 브라우저가 연결은 되지만 이벤트를 못 받습니다(활동 스트림이 계속 로딩 상태로 보임).
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your.domain.com;
+    # ssl_certificate / ssl_certificate_key ...
+
+    location / {
+        proxy_pass http://127.0.0.1:8787;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # SSE: 버퍼링 해제, 긴 제한 시간, HTTP/1.1
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+    }
+}
+```
+
+SSE가 페이지와 다른 출처(예: 별도 서브도메인)를 사용해야 할 때만 **빌드 시점에** `NEXT_PUBLIC_SSE_BASE`를 설정하십시오. 이 값은 `next build` 때 정적 파일에 들어가므로 컨테이너 실행 시 설정해도 적용되지 않습니다.
 
 ---
 
@@ -344,6 +488,16 @@ flowchart TB
 
 ## 개발
 
+### 수동 취약점 재검증
+
+작업 상세의 "재검증" 탭에서는 이 작업의 취약점을 페이지별로 선택하고 이전 결론과 증거를 확인한 뒤 수동으로 재검증을 시작할 수 있습니다. 실행 중에는 현재 탭을 유지하면서 회전 아이콘과 "재검증 중" 상태를 표시하고, 수정이 확인되면 취약점 상태도 함께 갱신합니다.
+
+취약점 목록 행의 "재검증" 또는 취약점 상세의 "취약점 재검증" 영역에서 선택적인 수정 버전·시험 조건·제약을 입력하면 독립된 재검증 에이전트 세션을 만듭니다. 평면 목록, 작업별 그룹, 자산 보기에서 모두 시작할 수 있으며, 실행 중인 세션을 눌러 과정을 확인할 수 있습니다. 결론은 "여전히 재현됨", "수정됨", "확인 불가"로 구분하고 각 결론·증거·세션 링크를 취약점 상세에 보존합니다.
+
+백엔드 최초 실행 시 편집 가능한 `retester` 에이전트를 생성합니다. 에이전트 관리에서 프롬프트, LLM, 실행 예산, 도구를 설정할 수 있습니다. 바인딩된 LLM이 없으면 전역 활성 설정을 사용합니다. 재검증 세션이 정상 완료되고 결론이 "수정됨"이면 취약점 처리 상태도 자동으로 "수정됨"으로 바뀝니다. 실행 중·실패·중지 또는 다른 결론이면 기존 상태를 유지하며, 원본 증거와 보고서는 항상 보존합니다. 같은 취약점의 재검증이 실행 중이면 기존 세션을 재사용하고, 중지·실패·서비스 재시작 뒤에는 다시 시작할 수 있습니다.
+
+현재 재검증 이력은 취약점 상세와 세션에서 확인하며, 취약점 보고서 내보내기나 작업 보관 파일에는 아직 포함되지 않고 트래픽 기록과도 자동 연결되지 않습니다. 데모 모드는 명시적으로 표시된 모의 기록만 만들고 실제 대상에 요청하지 않습니다.
+
 로컬 개발과 테스트:
 
 ```bash
@@ -355,9 +509,23 @@ flowchart TB
 - 테스트: `go test ./...`
 - Mock 미리 보기(백엔드 없이): `cd web && NEXT_PUBLIC_MOCK=1 npm run dev`
 
-그 밖의 개발 항목(수동 취약점 재검증 등)은 [`README.zh.md`](README.zh.md#开发)의 "开发"(개발) 절을 참고하십시오.
-
 이 한국어판이 상류 ARTEX 에 더한 변경은 [변경 이력(CHANGELOG.md)](CHANGELOG.md)에 정리되어 있습니다.
+
+---
+
+## 커뮤니티
+
+원본 프로젝트의 중국어 커뮤니티는 WeChat 공식 계정 **SecSentry**를 통해 안내됩니다.
+
+<div align="center">
+
+<img src="screenshots/wx.png" alt="WeChat 공식 계정 SecSentry" width="480" />
+
+</div>
+
+## 참고
+
+- https://github.com/oritera/Cairn
 
 ---
 
@@ -371,12 +539,23 @@ flowchart TB
 
 > ⚠️ **중요:** 오픈소스 라이선스 자체는 소프트웨어의 사용 용도를 제한하지 않습니다. 아래 "사용 제한"과 "면책"은 원저자가 사용자에게 추가로 요구하는 약정이자 엄중한 고지이므로 반드시 지켜 주십시오.
 
-### 사용 제한
+**ARTEX는 개인 학습, 코드 연구, 로컬 기술 검증 용도로만 사용할 수 있으며, 어떤 온라인 시스템이나 웹사이트에도 실제 테스트를 수행해서는 안 됩니다.**
 
-- 이 도구는 **소스 코드를 읽고 학습·연구하는 용도**, 그리고 **로컬 격리 환경에서 기술 원리를 검증**하는 용도로 쓰십시오.
-- 자신이 소유하거나 **서면으로 명시적 허가를 받은 대상이 아니라면**, 어떤 웹사이트·온라인 서비스·연결된 시스템에도 스캐닝·탐지·익스플로잇·공격을 수행하지 마십시오.
-- 불법 침입, 데이터 탈취, 서비스 거부(DoS), 그 밖에 파괴적·범죄적 활동에 사용하는 것을 엄격히 금지합니다.
-- 사용자가 속한 국가·지역의 네트워크 보안·데이터 보호·컴퓨터 범죄 관련 법규(대한민국의 경우 정보통신망법·개인정보보호법 등)를 모두 준수해야 합니다.
+### 허용되는 사용 범위
+
+- 이 프로젝트의 소스 코드를 읽고 학습·연구하거나, 로컬 격리 환경에서 기술 원리를 검증하는 용도로만 사용할 수 있습니다.
+- 개인 학습, 학술 연구, 코드 검토 등 공격적이지 않은 용도에 적합합니다.
+
+### 금지 사항
+
+- 허가 여부나 본인 소유 여부와 관계없이, 이 도구로 웹사이트·온라인 서비스·네트워크 연결 시스템에 스캐닝·탐지·익스플로잇·공격을 수행하는 것을 엄격히 금지합니다.
+- 실제 침투 테스트, 공격·방어 훈련 또는 프로덕션 환경에서 사용하는 것을 금지합니다.
+- 불법 침입, 데이터 탈취, 랜섬웨어, 서비스 거부 또는 그 밖의 파괴적·범죄적 활동에 사용하는 것을 금지합니다.
+- 사용자가 속한 국가나 지역의 법률과 규정을 위반하는 용도로 사용하는 것을 금지합니다.
+
+### 준법 책임
+
+사용자는 자신이 속한 국가와 지역의 네트워크 보안, 데이터 보호, 컴퓨터 범죄 관련 법률을 직접 준수해야 합니다. 대한민국에서는 정보통신망법과 개인정보 보호법 등이 적용될 수 있습니다. **이 도구의 사용으로 생기는 모든 법적 책임과 결과는 사용자 본인이 부담합니다.**
 
 ### 면책
 
