@@ -11,7 +11,6 @@ import (
 	"io"
 	"log"
 	"math/big"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -63,8 +62,8 @@ type authClaims struct {
 }
 
 type oauthTransaction struct {
-	verifier, nonce, client string
-	created, expires        time.Time
+	verifier, nonce  string
+	created, expires time.Time
 }
 
 var oauthTransactions = struct {
@@ -303,10 +302,6 @@ func (s *Server) authGoogleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	verifier, _ := randomURLToken(48)
 	nonce, _ := randomURLToken(32)
-	client := r.RemoteAddr
-	if host, _, splitErr := net.SplitHostPort(r.RemoteAddr); splitErr == nil {
-		client = host
-	}
 	oauthTransactions.Lock()
 	now := time.Now()
 	for k, v := range oauthTransactions.m {
@@ -316,18 +311,6 @@ func (s *Server) authGoogleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if old, cookieErr := r.Cookie("artex_oauth_state"); cookieErr == nil {
 		delete(oauthTransactions.m, old.Value)
-	}
-	clientActive := 0
-	for _, tx := range oauthTransactions.m {
-		if tx.client == client {
-			clientActive++
-		}
-	}
-	if clientActive >= 10 {
-		oauthTransactions.Unlock()
-		w.Header().Set("Retry-After", "60")
-		writeErr(w, http.StatusTooManyRequests, "로그인 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요")
-		return
 	}
 	if len(oauthTransactions.m) >= 1024 {
 		var oldestKey string
@@ -339,7 +322,7 @@ func (s *Server) authGoogleStart(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(oauthTransactions.m, oldestKey)
 	}
-	oauthTransactions.m[state] = oauthTransaction{verifier: verifier, nonce: nonce, client: client, created: now, expires: now.Add(10 * time.Minute)}
+	oauthTransactions.m[state] = oauthTransaction{verifier: verifier, nonce: nonce, created: now, expires: now.Add(10 * time.Minute)}
 	oauthTransactions.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "artex_oauth_state", Value: state, Path: "/api/auth/google/callback", MaxAge: 600, HttpOnly: true, Secure: strings.HasPrefix(strings.ToLower(c.redirectURL), "https://"), SameSite: http.SameSiteLaxMode})
 	sum := sha256.Sum256([]byte(verifier))

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -171,26 +172,30 @@ func TestLogoutClearsHttpOnlyCookie(t *testing.T) {
 	}
 }
 
-func TestOAuthTransactionPerClientRateLimit(t *testing.T) {
+func TestOAuthTransactionGlobalCapEvictsOldest(t *testing.T) {
 	t.Setenv("ARTEX_GOOGLE_CLIENT_ID", "id")
 	t.Setenv("ARTEX_GOOGLE_CLIENT_SECRET", "secret")
 	t.Setenv("ARTEX_GOOGLE_REDIRECT_URL", "https://artex.example/api/auth/google/callback")
 	oauthTransactions.Lock()
 	old := oauthTransactions.m
-	oauthTransactions.m = make(map[string]oauthTransaction, 10)
-	for i := 0; i < 10; i++ {
-		oauthTransactions.m[string(rune('a'+i))] = oauthTransaction{client: "192.0.2.1", created: time.Now(), expires: time.Now().Add(time.Minute)}
+	oauthTransactions.m = make(map[string]oauthTransaction, 1024)
+	for i := 0; i < 1024; i++ {
+		oauthTransactions.m[fmt.Sprint(i)] = oauthTransaction{created: time.Now().Add(time.Duration(i) * time.Second), expires: time.Now().Add(time.Hour)}
 	}
 	oauthTransactions.Unlock()
 	defer func() { oauthTransactions.Lock(); oauthTransactions.m = old; oauthTransactions.Unlock() }()
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/auth/google", nil)
-	r.RemoteAddr = "192.0.2.1:1234"
 	(&Server{}).authGoogleStart(w, r)
-	if w.Code != http.StatusTooManyRequests {
+	if w.Code != http.StatusFound {
 		t.Fatalf("status=%d", w.Code)
 	}
-	if w.Header().Get("Retry-After") != "60" {
-		t.Fatalf("Retry-After=%q", w.Header().Get("Retry-After"))
+	oauthTransactions.Lock()
+	defer oauthTransactions.Unlock()
+	if len(oauthTransactions.m) != 1024 {
+		t.Fatalf("transactions=%d", len(oauthTransactions.m))
+	}
+	if _, exists := oauthTransactions.m["0"]; exists {
+		t.Fatal("oldest transaction was not evicted")
 	}
 }
