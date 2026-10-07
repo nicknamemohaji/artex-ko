@@ -13,6 +13,7 @@ import (
 // only the dimensions needed to slice token spend (model / profile / task / agent),
 // never any prompt or response content.
 type LLMUsage struct {
+	UserID        int64  `json:"user_id,omitempty"`
 	TaskID        string `json:"task_id"`        // task registry id (matches llm_records.task_id)
 	ExplorationID int64  `json:"exploration_id"` // exploration id parsed from the session (0 = unknown/non-task)
 	Worker        string `json:"worker"`         // agent lane: worker / planner / mainagent / goals
@@ -42,9 +43,11 @@ CREATE TABLE IF NOT EXISTS llm_usage (
     cache_write    INTEGER NOT NULL DEFAULT 0,
     status         TEXT
 );
+ALTER TABLE llm_usage ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES auth_users(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS idx_llm_usage_task  ON llm_usage(task_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_model ON llm_usage(task_id, model);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_exp   ON llm_usage(exploration_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_user  ON llm_usage(user_id, ts DESC);
 `
 
 // EnsureLLMUsageTable creates the llm_usage metering table if it does not exist.
@@ -71,10 +74,10 @@ func (d *DB) InsertLLMUsage(u *LLMUsage) error {
 		expID = u.ExplorationID
 	}
 	_, err := d.Exec(`
-INSERT INTO llm_usage(task_id, exploration_id, worker, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, status)
-VALUES (NULLIF($1,''),$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$10,$11)`,
+INSERT INTO llm_usage(user_id, task_id, exploration_id, worker, model, profile_name, latency_ms, input_tokens, output_tokens, cache_read, cache_write, status)
+VALUES (COALESCE(NULLIF($12,0),(SELECT owner_user_id FROM tasks WHERE id=CASE WHEN $1 ~ '^[0-9]+$' THEN $1::bigint END)),NULLIF($1,''),$2,NULLIF($3,''),NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9,$10,$11)`,
 		u.TaskID, expID, u.Worker, u.Model, u.ProfileName,
-		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.Status)
+		u.LatencyMs, u.InputTokens, u.OutputTokens, u.CacheRead, u.CacheWrite, u.Status, u.UserID)
 	return err
 }
 
@@ -119,17 +122,55 @@ type ProfileUsage struct {
 	CacheWriteTokens int    `json:"cache_write_tokens"`
 }
 
+type UserUsage struct {
+	UserID           int64  `json:"user_id"`
+	Email            string `json:"email"`
+	Name             string `json:"name"`
+	Calls            int    `json:"calls"`
+	InputTokens      int    `json:"input_tokens"`
+	OutputTokens     int    `json:"output_tokens"`
+	CacheReadTokens  int    `json:"cache_read_tokens"`
+	CacheWriteTokens int    `json:"cache_write_tokens"`
+}
+
+// UsageByUser is the administrator view. Legacy NULL-owned rows are returned as
+// user_id=0 so migrations never silently assign historical spend to a new user.
+func (d *DB) UsageByUser() ([]UserUsage, error) {
+	rows, err := d.Query(`SELECT COALESCE(u.id,0), COALESCE(u.email,'legacy-admin'), COALESCE(u.name,'Legacy admin'),
+	COUNT(l.id), COALESCE(SUM(l.input_tokens),0), COALESCE(SUM(l.output_tokens),0),
+	COALESCE(SUM(l.cache_read),0), COALESCE(SUM(l.cache_write),0)
+FROM llm_usage l LEFT JOIN auth_users u ON u.id=l.user_id
+GROUP BY u.id,u.email,u.name ORDER BY SUM(l.input_tokens)+SUM(l.output_tokens) DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []UserUsage{}
+	for rows.Next() {
+		var v UserUsage
+		if err := rows.Scan(&v.UserID, &v.Email, &v.Name, &v.Calls, &v.InputTokens, &v.OutputTokens, &v.CacheReadTokens, &v.CacheWriteTokens); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // UsageByProfile returns global token spend grouped by profile name, most-used
 // first. profile_name may be empty for calls made on env/non-persisted configs.
 func (d *DB) UsageByProfile() ([]ProfileUsage, error) {
+	return d.UsageByProfileForUser(0, true)
+}
+
+func (d *DB) UsageByProfileForUser(userID int64, admin bool) ([]ProfileUsage, error) {
 	rows, err := d.Query(`
 SELECT COALESCE(profile_name,'') AS profile_name, COUNT(*) AS calls,
        COUNT(DISTINCT task_id) AS tasks,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
        COALESCE(SUM(cache_read),0), COALESCE(SUM(cache_write),0)
-FROM llm_usage
+FROM llm_usage WHERE ($1::boolean OR user_id=$2)
 GROUP BY profile_name
-ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`)
+ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`, admin, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +187,7 @@ ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC`)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	archived, err := d.archivedTaskAggregates()
+	archived, err := d.archivedTaskAggregatesForUser(userID, admin)
 	if err != nil {
 		return nil, err
 	}
@@ -196,6 +237,10 @@ type ProfileDayUsage struct {
 // UsageDaily returns per-(profile, day) token buckets for the past `days` days
 // (default 365 when days<=0), so the dashboard can slice by profile + range.
 func (d *DB) UsageDaily(days int) ([]ProfileDayUsage, error) {
+	return d.UsageDailyForUser(days, 0, true)
+}
+
+func (d *DB) UsageDailyForUser(days int, userID int64, admin bool) ([]ProfileDayUsage, error) {
 	if days <= 0 {
 		days = 365
 	}
@@ -204,9 +249,9 @@ SELECT COALESCE(profile_name,'') AS profile_name,
        to_char(ts AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
        COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(cache_read),0)
 FROM llm_usage
-WHERE ts >= now() - ($1 * interval '1 day')
+WHERE ts >= now() - ($1 * interval '1 day') AND ($2::boolean OR user_id=$3)
 GROUP BY profile_name, day
-ORDER BY day`, days)
+ORDER BY day`, days, admin, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +267,7 @@ ORDER BY day`, days)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	archived, err := d.archivedTaskAggregates()
+	archived, err := d.archivedTaskAggregatesForUser(userID, admin)
 	if err != nil {
 		return nil, err
 	}

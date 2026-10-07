@@ -857,6 +857,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tokens/daily", s.tokenDailyStats)
 	mux.HandleFunc("GET /api/tokens/conversations", s.conversationTokens)
 	mux.HandleFunc("GET /api/tokens/usage", s.pgUsageStats) // 全局 llm_usage 聚合（仪表盘新版视图）
+	mux.HandleFunc("GET /api/tokens/users", s.pgUsageByUser)
 
 	mux.HandleFunc("GET /api/audit", s.getAudit)
 	mux.HandleFunc("POST /api/gc", s.gc)
@@ -1011,7 +1012,7 @@ func (s *Server) Handler() http.Handler {
 	// /api/* goes through CORS + JWT; everything else is served by the embedded
 	// frontend (public — auth is enforced client-side and on the API). With the
 	// no-embed build the webui handler just 404s (run `next dev` separately).
-	api := cors(s.requireAuth(mux))
+	api := cors(s.requireAuth(s.authorizeOwnedResources(mux)))
 	root := http.NewServeMux()
 	root.Handle("/api/", api)
 	root.Handle("/", s.webuiHandler())
@@ -1110,6 +1111,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
+	uid, admin := requestIdentity(r)
 	active := ""
 	if t := s.m.ActiveTask(); t != nil {
 		active = t.ID
@@ -1119,6 +1121,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	archiveBlockers, _ := s.m.PG().TaskArchiveBlockers()
 	dtos := make([]TaskDTO, 0, len(list))
 	for _, t := range list {
+		if !admin && (t.OwnerUserID == nil || *t.OwnerUserID != uid) {
+			continue
+		}
 		dto := taskDTO(t, s.resolvedTaskStatus(t))
 		applyTaskArchiveBlocker(&dto, archiveBlockers)
 		metric := metrics[t.ExpID]
@@ -1570,6 +1575,17 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, fmt.Sprintf(errCreateTaskSourceNotFound, id))
 			return
 		}
+		if uid, admin := requestIdentity(r); !admin {
+			owned, ownErr := s.m.PG().TaskOwnedBy(id, uid)
+			if ownErr != nil {
+				writeErr(w, 500, ownErr.Error())
+				return
+			}
+			if !owned {
+				writeErr(w, 400, fmt.Sprintf(errCreateTaskSourceNotFound, id))
+				return
+			}
+		}
 		seenSources[id] = true
 		sourceIDs = append(sourceIDs, id)
 	}
@@ -1585,7 +1601,8 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t, err := s.m.CreateTaskWithOptions(req.Description, req.Goal, db.TaskCreateOptions{
-		Name: strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
+		OwnerUserID: func() int64 { id, _ := requestIdentity(r); return id }(),
+		Name:        strings.TrimSpace(req.Name), CategoryID: req.CategoryID,
 		SourceTaskIDs: sourceIDs, CompanyIDs: req.CompanyIDs, LLMProfileIDs: req.LLMProfileIDs,
 		TimeoutSeconds: req.TimeoutSeconds, PlanHeartbeatSeconds: req.PlanHeartbeatSeconds,
 		CoverageEnabled: req.CoverageEnabled,
@@ -2939,7 +2956,8 @@ func (s *Server) conversationTokens(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, []any{})
 		return
 	}
-	rows, err := s.m.pg.ConversationTokenSummaries()
+	uid, admin := requestIdentity(r)
+	rows, err := s.m.pg.ConversationTokenSummariesForUser(uid, admin)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

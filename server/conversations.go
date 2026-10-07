@@ -106,7 +106,8 @@ func (s *Server) pgListConversations(w http.ResponseWriter, r *http.Request) {
 	if pg == nil {
 		return
 	}
-	cs, err := pg.ListConversations()
+	uid, admin := requestIdentity(r)
+	cs, err := pg.ListConversationsForUser(uid, admin)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -165,7 +166,8 @@ func (s *Server) pgCreateConversation(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Sprintf(convErrTitleTooLong, maxConversationTitleRunes))
 		return
 	}
-	c, err := pg.CreateConversation(req.AgentKey, title, req.LLMProfileID)
+	uid, _ := requestIdentity(r)
+	c, err := pg.CreateConversationForUser(req.AgentKey, title, req.LLMProfileID, uid)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -322,6 +324,19 @@ func (s *Server) pgDeleteConversationsBatch(w http.ResponseWriter, r *http.Reque
 	if len(ids) == 0 || len(ids) > maxConversationDeleteBatch {
 		writeErr(w, http.StatusBadRequest, fmt.Sprintf(convErrIDsCount, maxConversationDeleteBatch))
 		return
+	}
+	if uid, admin := requestIdentity(r); !admin {
+		for _, id := range ids {
+			owned, err := pg.ConversationOwnedBy(id, uid)
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+			if !owned {
+				writeErr(w, 404, "conversation not found")
+				return
+			}
+		}
 	}
 	for _, id := range ids {
 		s.cancelConversation(id)
@@ -877,7 +892,7 @@ func (s *Server) runTriggeredRun(item triggeredRun) {
 		}
 	}()
 	pg := s.m.pg
-	c, err := pg.CreateConversation(item.agentKey, firstLine(item.title, 60), nil)
+	c, err := pg.CreateConversationForUser(item.agentKey, firstLine(item.title, 60), nil, pg.TaskOwnerUserID(item.taskID))
 	if err != nil {
 		log.Printf("[trigger] create conversation for %s failed: %v", item.agentKey, err)
 		return

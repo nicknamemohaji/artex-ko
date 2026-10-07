@@ -117,6 +117,17 @@ export interface AuthUser {
   last_login_at?: string;
 }
 
+export interface UserTokenUsage {
+  user_id: number;
+  email: string;
+  name: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("artex_token");
@@ -255,6 +266,7 @@ export const api = {
   changePassword: (oldPassword: string, newPassword: string) =>
     post<{ ok: boolean }>("/auth/change-password", { old_password: oldPassword, new_password: newPassword }),
   authUsers: () => get<{ users: AuthUser[] }>("/auth/admin/users"),
+  userTokenUsage: () => get<{ users: UserTokenUsage[] }>("/tokens/users"),
   updateAuthUser: (id: number, status: AuthUser["status"], role: AuthUser["role"]) =>
     patch<AuthUser>(`/auth/admin/users/${id}`, { status, role }),
 

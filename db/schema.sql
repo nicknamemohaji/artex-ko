@@ -1402,3 +1402,11 @@ CREATE TABLE IF NOT EXISTS auth_users (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_users_email_lower ON auth_users(lower(email));
 CREATE INDEX IF NOT EXISTS idx_auth_users_status ON auth_users(status, created_at DESC);
+
+-- Per-user ownership.  These columns are added after auth_users so upgrades and
+-- fresh installs can use the same FK ordering. NULL is deliberately reserved
+-- for legacy/password-admin data; regular OAuth users never inherit it.
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES auth_users(id) ON DELETE RESTRICT;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS owner_user_id BIGINT REFERENCES auth_users(id) ON DELETE RESTRICT;
+CREATE INDEX IF NOT EXISTS idx_tasks_owner_alive ON tasks(owner_user_id, id DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_conversations_owner ON conversations(owner_user_id, updated_at DESC);

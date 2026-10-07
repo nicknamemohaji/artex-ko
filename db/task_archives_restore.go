@@ -773,10 +773,14 @@ WHERE archive.id=$1 FOR UPDATE OF archive,task`, archiveID).Scan(&taskID, &expID
 // ArchivedAggregateStats returns compact summaries used by global dashboards so
 // cold data does not disappear from historical totals.
 func (d *DB) ArchivedAggregateStats() ([]json.RawMessage, error) {
+	return d.ArchivedAggregateStatsForUser(0, true)
+}
+
+func (d *DB) ArchivedAggregateStatsForUser(userID int64, admin bool) ([]json.RawMessage, error) {
 	rows, err := d.Query(`SELECT archive.aggregate_stats
 FROM task_archives archive
 JOIN tasks task ON task.id=archive.task_id
-WHERE task.archived_at IS NOT NULL`)
+WHERE task.archived_at IS NOT NULL AND ($1::boolean OR task.owner_user_id=$2)`, admin, userID)
 	if err != nil {
 		return nil, err
 	}

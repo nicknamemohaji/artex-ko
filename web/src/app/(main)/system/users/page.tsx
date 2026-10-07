@@ -3,16 +3,19 @@
 import * as React from "react";
 
 import { Button } from "@/components/ui/button";
-import { type AuthUser, api } from "@/lib/api";
+import { type AuthUser, type UserTokenUsage, api } from "@/lib/api";
 
 export default function UsersPage() {
   const [users, setUsers] = React.useState<AuthUser[]>([]);
+  const [usage, setUsage] = React.useState<Map<number, UserTokenUsage>>(new Map());
   const [error, setError] = React.useState("");
   const load = React.useCallback(
     () =>
-      api
-        .authUsers()
-        .then((r) => setUsers(r.users ?? []))
+      Promise.all([api.authUsers(), api.userTokenUsage()])
+        .then(([r, tokenUsage]) => {
+          setUsers(r.users ?? []);
+          setUsage(new Map((tokenUsage.users ?? []).map((v) => [v.user_id, v])));
+        })
         .catch((e) => setError(e.message)),
     [],
   );
@@ -41,6 +44,7 @@ export default function UsersPage() {
               <th className="p-3 text-left">사용자</th>
               <th className="p-3 text-left">역할</th>
               <th className="p-3 text-left">상태</th>
+              <th className="p-3 text-right">토큰 사용량</th>
               <th className="p-3 text-right">관리</th>
             </tr>
           </thead>
@@ -53,6 +57,10 @@ export default function UsersPage() {
                 </td>
                 <td className="p-3">{u.role}</td>
                 <td className="p-3">{u.status}</td>
+                <td className="p-3 text-right tabular-nums">
+                  {((usage.get(u.id)?.input_tokens ?? 0) + (usage.get(u.id)?.output_tokens ?? 0)).toLocaleString()}
+                  <div className="text-xs text-muted-foreground">{usage.get(u.id)?.calls ?? 0}회 호출</div>
+                </td>
                 <td className="space-x-2 p-3 text-right">
                   {u.status !== "approved" && (
                     <Button size="sm" onClick={() => update(u, "approved")}>
@@ -74,7 +82,7 @@ export default function UsersPage() {
             ))}
             {!users.length && (
               <tr>
-                <td colSpan={4} className="p-8 text-center text-muted-foreground">
+                <td colSpan={5} className="p-8 text-center text-muted-foreground">
                   등록된 Google 사용자가 없습니다.
                 </td>
               </tr>

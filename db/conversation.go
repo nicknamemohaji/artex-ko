@@ -20,13 +20,18 @@ type ConvTokenSummary struct {
 // ConversationTokenSummaries returns one row per conversation with its summed
 // result-row token usage (0 for conversations with no completed run yet).
 func (d *DB) ConversationTokenSummaries() ([]ConvTokenSummary, error) {
+	return d.ConversationTokenSummariesForUser(0, true)
+}
+
+func (d *DB) ConversationTokenSummariesForUser(userID int64, admin bool) ([]ConvTokenSummary, error) {
 	rows, err := d.Query(`
 SELECT c.llm_profile_id, c.created_at::text,
        COALESCE(sum(ca.input_tokens),0), COALESCE(sum(ca.output_tokens),0),
        COALESCE(sum(ca.cache_read_tokens),0), COALESCE(sum(ca.cache_write_tokens),0)
 FROM conversations c
 LEFT JOIN conversation_activities ca ON ca.conversation_id = c.id AND ca.kind = 'result'
-GROUP BY c.id`)
+WHERE ($1::boolean OR c.owner_user_id=$2)
+GROUP BY c.id`, admin, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -51,6 +56,7 @@ GROUP BY c.id`)
 // independent of the pentest exploration graph — see schema.sql §I.
 type Conversation struct {
 	ID           int64      `json:"id"`
+	OwnerUserID  *int64     `json:"owner_user_id,omitempty"`
 	AgentKey     string     `json:"agent_key"`
 	Title        string     `json:"title"`
 	LLMProfileID *int64     `json:"llm_profile_id,omitempty"`
@@ -66,12 +72,12 @@ type ConversationPatch struct {
 	Pinned *bool
 }
 
-const convCols = `id, agent_key, title, llm_profile_id, pinned_at, created_at, updated_at`
+const convCols = `id, owner_user_id, agent_key, title, llm_profile_id, pinned_at, created_at, updated_at`
 
 func scanConv(row interface{ Scan(...any) error }) (Conversation, error) {
 	var c Conversation
 	var pinnedAt sql.NullTime
-	err := row.Scan(&c.ID, &c.AgentKey, &c.Title, &c.LLMProfileID, &pinnedAt, &c.CreatedAt, &c.UpdatedAt)
+	err := row.Scan(&c.ID, &c.OwnerUserID, &c.AgentKey, &c.Title, &c.LLMProfileID, &pinnedAt, &c.CreatedAt, &c.UpdatedAt)
 	if pinnedAt.Valid {
 		c.Pinned = true
 		c.PinnedAt = &pinnedAt.Time
@@ -82,6 +88,10 @@ func scanConv(row interface{ Scan(...any) error }) (Conversation, error) {
 // CreateConversation opens a new chat thread for agentKey with an initial title.
 // llmProfileID may be nil to use the globally active profile.
 func (d *DB) CreateConversation(agentKey, title string, llmProfileID *int64) (*Conversation, error) {
+	return d.CreateConversationForUser(agentKey, title, llmProfileID, 0)
+}
+
+func (d *DB) CreateConversationForUser(agentKey, title string, llmProfileID *int64, userID int64) (*Conversation, error) {
 	tx, err := d.Begin()
 	if err != nil {
 		return nil, err
@@ -92,8 +102,8 @@ func (d *DB) CreateConversation(agentKey, title string, llmProfileID *int64) (*C
 	// by this transaction before it takes a profile lock, matching DeleteProfile's
 	// child-row -> profile-row protocol.
 	c, err := scanConv(tx.QueryRow(`
-INSERT INTO conversations(agent_key, title, llm_profile_id) VALUES ($1, $2, NULL)
-RETURNING `+convCols, agentKey, title))
+INSERT INTO conversations(agent_key, title, llm_profile_id, owner_user_id) VALUES ($1, $2, NULL, NULLIF($3,0))
+RETURNING `+convCols, agentKey, title, userID))
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +150,13 @@ func (d *DB) UpdateConversationProfile(id int64, llmProfileID *int64) error {
 
 // ListConversations returns all threads, most-recently-updated first.
 func (d *DB) ListConversations() ([]*Conversation, error) {
-	rows, err := d.Query(`SELECT ` + convCols + ` FROM conversations
-ORDER BY (pinned_at IS NOT NULL) DESC, pinned_at DESC NULLS LAST, updated_at DESC, id DESC`)
+	return d.ListConversationsForUser(0, true)
+}
+
+func (d *DB) ListConversationsForUser(userID int64, admin bool) ([]*Conversation, error) {
+	rows, err := d.Query(`SELECT `+convCols+` FROM conversations
+WHERE ($1::boolean OR owner_user_id=$2)
+ORDER BY (pinned_at IS NOT NULL) DESC, pinned_at DESC NULLS LAST, updated_at DESC, id DESC`, admin, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +182,12 @@ func (d *DB) GetConversation(id int64) (*Conversation, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+func (d *DB) ConversationOwnedBy(id, userID int64) (bool, error) {
+	var ok bool
+	err := d.QueryRow(`SELECT EXISTS(SELECT 1 FROM conversations WHERE id=$1 AND owner_user_id=$2)`, id, userID).Scan(&ok)
+	return ok, err
 }
 
 // UpdateConversation applies a partial title/pin mutation and returns the updated

@@ -19,7 +19,11 @@ type taskArchiveAggregate struct {
 }
 
 func (d *DB) archivedTaskAggregates() ([]taskArchiveAggregate, error) {
-	rawItems, err := d.ArchivedAggregateStats()
+	return d.archivedTaskAggregatesForUser(0, true)
+}
+
+func (d *DB) archivedTaskAggregatesForUser(userID int64, admin bool) ([]taskArchiveAggregate, error) {
+	rawItems, err := d.ArchivedAggregateStatsForUser(userID, admin)
 	if err != nil {
 		return nil, err
 	}

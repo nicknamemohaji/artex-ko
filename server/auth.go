@@ -212,6 +212,9 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 				writeErr(w, 403, authErrPending)
 				return
 			}
+			// Roles are mutable in the admin UI. Never trust a week-old role claim
+			// after the account has been demoted or promoted.
+			claims.Role = u.Role
 		}
 		r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, claims))
 		h.ServeHTTP(w, r)
@@ -247,6 +250,79 @@ func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	return true
+}
+
+func requestIdentity(r *http.Request) (userID int64, admin bool) {
+	c, _ := r.Context().Value(authClaimsContextKey{}).(*authClaims)
+	if c == nil {
+		return 0, false
+	}
+	return c.UserID, c.Role == "admin"
+}
+
+// authorizeOwnedResources closes the common IDOR surface before individual
+// handlers resolve task/conversation state. Handlers that list or create rows
+// still apply ownership explicitly because they do not carry a resource id.
+func (s *Server) authorizeOwnedResources(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/auth/") || r.URL.Path == "/api/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		uid, admin := requestIdentity(r)
+		if admin {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if uid == 0 {
+			writeErr(w, 403, authErrAdminRequired)
+			return
+		}
+		// Global operational logs and unscoped execution ledgers can contain data
+		// from every tenant. A regular user must use a task-scoped view.
+		if strings.HasPrefix(r.URL.Path, "/api/logs") ||
+			strings.HasPrefix(r.URL.Path, "/api/task-archives") ||
+			(strings.HasPrefix(r.URL.Path, "/api/tasks/") && strings.HasSuffix(r.URL.Path, "/batch")) ||
+			(strings.HasPrefix(r.URL.Path, "/api/llm/records") && r.URL.Query().Get("task") == "") ||
+			(strings.HasPrefix(r.URL.Path, "/api/commands") && r.URL.Query().Get("task") == "") {
+			writeErr(w, 403, authErrAdminRequired)
+			return
+		}
+		var taskID, convID int64
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		if len(parts) >= 3 && parts[0] == "api" && parts[1] == "tasks" {
+			taskID, _ = strconv.ParseInt(parts[2], 10, 64)
+		}
+		if len(parts) >= 3 && parts[0] == "api" && parts[1] == "conversations" {
+			convID, _ = strconv.ParseInt(parts[2], 10, 64)
+		}
+		if taskID == 0 {
+			taskID, _ = strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("task")), 10, 64)
+		}
+		if taskID > 0 {
+			ok, err := s.m.PG().TaskOwnedBy(taskID, uid)
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+			if !ok {
+				writeErr(w, 404, "task not found")
+				return
+			}
+		}
+		if convID > 0 {
+			ok, err := s.m.PG().ConversationOwnedBy(convID, uid)
+			if err != nil {
+				writeErr(w, 500, err.Error())
+				return
+			}
+			if !ok {
+				writeErr(w, 404, "conversation not found")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // GET /api/auth/status — reports whether the admin password has been initialised.

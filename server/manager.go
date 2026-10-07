@@ -28,6 +28,7 @@ import (
 // is the exploration the task owns.
 type Task struct {
 	ID           string `json:"id"`
+	OwnerUserID  *int64 `json:"owner_user_id,omitempty"`
 	ExpID        int64  `json:"exploration_id"`
 	Name         string `json:"name"` // 可选任务名称;空=未命名
 	CategoryID   *int64 `json:"category_id,omitempty"`
@@ -842,8 +843,9 @@ func unixNanoOrZero(t *time.Time) int64 {
 func taskFromPG(pt *pgdb.Task, store *pgdb.ExplorationStore, ic *intercept.Interceptor) *Task {
 	return &Task{
 		ID: strconv.FormatInt(pt.ID, 10), ExpID: pt.ExplorationID,
-		Name:       pt.Name,
-		CategoryID: cloneInt64Ptr(pt.CategoryID), CategoryName: pt.CategoryName,
+		OwnerUserID: cloneInt64Ptr(pt.OwnerUserID),
+		Name:        pt.Name,
+		CategoryID:  cloneInt64Ptr(pt.CategoryID), CategoryName: pt.CategoryName,
 		PinnedAt:    unixOrZero(pt.PinnedAt),
 		Description: pt.Description, Goal: pt.Goal, CreatedAt: pt.CreatedAt.Unix(), Paused: pt.Paused, Queued: pt.Queued,
 		QueuedAt: unixNanoOrZero(pt.QueuedAt), QueueMode: pt.QueueMode,

@@ -105,17 +105,30 @@ func (s *Server) pgUsageStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	days := atoiDefault(r.URL.Query().Get("days"), 365)
-	byProfile, err := pg.UsageByProfile()
+	uid, admin := requestIdentity(r)
+	byProfile, err := pg.UsageByProfileForUser(uid, admin)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	daily, err := pg.UsageDaily(days)
+	daily, err := pg.UsageDailyForUser(days, uid, admin)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	writeJSON(w, 200, map[string]any{"by_profile": byProfile, "daily": daily})
+}
+
+func (s *Server) pgUsageByUser(w http.ResponseWriter, r *http.Request) {
+	if !s.requireAdmin(w, r) {
+		return
+	}
+	rows, err := s.m.PG().UsageByUser()
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"users": rows})
 }
 
 // pgLLMTasks returns distinct recorded tasks with counts, for the page's task
