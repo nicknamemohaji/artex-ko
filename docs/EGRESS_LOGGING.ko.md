@@ -19,11 +19,11 @@ docker compose ps
 
 로그는 기본 50 MiB 파일 10개까지 순환한다. 환경변수로 조정할 수 있다.
 
-- `ARTEX_EGRESS_BODY_LIMIT`: 이벤트당 기록할 본문 최대 바이트, 기본 65,536
+- `ARTEX_EGRESS_BODY_LIMIT`: 이벤트당 기록할 본문 최대 바이트. 기본값 0으로 본문을 저장하지 않으며, 명시적으로 켤 때만 제한된 본문을 기록한다.
 - `ARTEX_EGRESS_LOG_BYTES`: 파일 하나의 최대 크기, 기본 52,428,800
 - `ARTEX_EGRESS_LOG_BACKUPS`: 보관할 순환 파일 수, 기본 10
 
-Authorization, Proxy-Authorization, Cookie, Set-Cookie, API key 계열 헤더와 민감한 쿼리 필드는 저장 전에 마스킹한다. JSON 본문의 민감한 키와 일반 텍스트의 흔한 bearer/key 표현도 마스킹한다. 임의 형식 본문의 모든 비밀값을 완벽하게 식별할 수는 없으므로 로그 디렉터리와 대시보드는 관리자 데이터로 취급해야 한다.
+Authorization, Proxy-Authorization, Cookie, Set-Cookie, API key 계열 헤더와 민감한 쿼리 필드는 저장 전에 마스킹한다. 본문 기록을 켜면 JSON·SSE JSON의 민감한 키, bearer 및 `sk-` 계열 토큰, PEM private key를 마스킹하고 바이너리 본문은 저장하지 않는다. 임의 형식 본문의 모든 비밀값을 완벽하게 식별할 수는 없으므로 로그 디렉터리와 대시보드는 관리자 데이터로 취급해야 한다.
 
 SSE 응답은 원본 chunk를 그대로 반환하면서 제한된 복사본만 기록한다. 로그 기록 실패나 디스크 부족은 요청 전달을 중단하지 않는 fail-open 정책이다. 따라서 로그 누락 알림과 디스크 모니터링을 별도로 구성해야 한다.
 

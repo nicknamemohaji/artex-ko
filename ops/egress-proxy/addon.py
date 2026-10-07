@@ -5,7 +5,6 @@ isolated from forwarding so a full disk or malformed payload does not interrupt
 LLM SSE streams or ordinary application traffic.
 """
 
-import base64
 import json
 import logging
 import os
@@ -19,6 +18,8 @@ BODY_LIMIT = max(0, int(os.getenv("ARTEX_EGRESS_BODY_LIMIT", "65536")))
 LOG_DIR = os.getenv("ARTEX_EGRESS_LOG_DIR", "/var/log/artex-egress")
 SENSITIVE = re.compile(r"(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|token|secret|password|passwd)")
 INLINE_SECRET = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}|((?:api[-_]?key|token|secret|password)\s*[:=]\s*[\"']?)[^\s,\"'}]{4,}")
+OPENAI_TOKEN = re.compile(r"\b(?:sk|sess|key)-[A-Za-z0-9_-]{8,}\b")
+PRIVATE_KEY = re.compile(r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----", re.DOTALL)
 
 os.makedirs(LOG_DIR, mode=0o700, exist_ok=True)
 os.umask(0o077)
@@ -59,7 +60,10 @@ def _body(raw: bytes | None):
         # catches common credential syntax in SSE/plaintext without attempting
         # to guess or mutate the forwarded bytes.
         try:
-            parsed = json.loads(text)
+            candidate = text
+            if text.startswith("data:"):
+                candidate = text[5:].strip()
+            parsed = json.loads(candidate)
 
             def redact(value):
                 if isinstance(value, dict):
@@ -68,12 +72,15 @@ def _body(raw: bytes | None):
                     return [redact(item) for item in value]
                 return value
 
-            text = json.dumps(redact(parsed), ensure_ascii=False, separators=(",", ":"))
+            redacted = json.dumps(redact(parsed), ensure_ascii=False, separators=(",", ":"))
+            text = ("data: " + redacted) if text.startswith("data:") else redacted
         except (ValueError, TypeError):
             text = INLINE_SECRET.sub(lambda match: (match.group(1) or match.group(2) or "") + "[REDACTED]", text)
+        text = OPENAI_TOKEN.sub("[REDACTED]", text)
+        text = PRIVATE_KEY.sub("[PRIVATE KEY OMITTED]", text)
         return {"text": text, "truncated": len(raw) > len(chunk)}
     except UnicodeDecodeError:
-        return {"base64": base64.b64encode(chunk).decode("ascii"), "truncated": len(raw) > len(chunk)}
+        return {"binary_omitted": True, "length": len(raw), "truncated": len(raw) > len(chunk)}
 
 
 def _write(event: dict):

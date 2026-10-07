@@ -4,28 +4,27 @@ services:
     # digest deliberately when upgrading; a floating tag defeats review.
     image: mitmproxy/mitmproxy@sha256:836cc23dd3dd1bfc1a8ca199df7a4c39ba136cb08a7c58b8f633149a80caa183
     command:
-      - mitmdump
-      - --listen-host
-      - 0.0.0.0
-      - --listen-port
-      - "8080"
-      - --set
-      - block_global=false
-      - --set
-      - stream_large_bodies=1m
-      - -s
-      - /opt/artex/addon.py
+      - sh
+      - -c
+      - |
+        mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set block_global=false --set stream_large_bodies=1m -s /opt/artex/addon.py &
+        proxy_pid=$$!
+        while [ ! -s /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem ]; do sleep 0.2; done
+        cp /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem /shared-ca/mitmproxy-ca-cert.pem
+        chmod 0444 /shared-ca/mitmproxy-ca-cert.pem
+        wait $$proxy_pid
     environment:
       ARTEX_EGRESS_LOG_DIR: /var/log/artex-egress
-      ARTEX_EGRESS_BODY_LIMIT: ${ARTEX_EGRESS_BODY_LIMIT:-65536}
+      ARTEX_EGRESS_BODY_LIMIT: ${ARTEX_EGRESS_BODY_LIMIT:-0}
       ARTEX_EGRESS_LOG_BYTES: ${ARTEX_EGRESS_LOG_BYTES:-52428800}
       ARTEX_EGRESS_LOG_BACKUPS: ${ARTEX_EGRESS_LOG_BACKUPS:-10}
     volumes:
       - ./ops/egress-proxy/addon.py:/opt/artex/addon.py:ro
       - ./data/egress-proxy/logs:/var/log/artex-egress
       - egress_proxy_ca:/home/mitmproxy/.mitmproxy
+      - egress_proxy_public_ca:/shared-ca
     healthcheck:
-      test: ["CMD-SHELL", "test -s /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem"]
+      test: ["CMD-SHELL", "test -s /shared-ca/mitmproxy-ca-cert.pem"]
       interval: 2s
       timeout: 2s
       retries: 20
@@ -85,9 +84,11 @@ services:
       # 프로젝트 루트의 skills 를 컨테이너에 마운트합니다(이미지에 내장된 /app/skills 를 덮어씁니다).
       # skill 을 고치면 이미지를 다시 빌드할 필요 없이, 컨테이너가 호스트의 이 파일을 그대로 읽습니다.
       - ./skills:/app/skills
-      - egress_proxy_ca:/etc/artex-egress-ca:ro
+      # Public certificate only. The proxy private CA key stays in its own volume.
+      - egress_proxy_public_ca:/etc/artex-egress-ca:ro
     restart: unless-stopped
 
 volumes:
   pgdata:
   egress_proxy_ca:
+  egress_proxy_public_ca:

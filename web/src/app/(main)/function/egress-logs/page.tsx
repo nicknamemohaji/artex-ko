@@ -43,7 +43,7 @@ export default function EgressLogsPage() {
 
   React.useEffect(() => {
     void load();
-    const timer = setInterval(() => void load(), 5000);
+    const timer = setInterval(() => void load(), 15000);
     return () => clearInterval(timer);
   }, [load]);
 

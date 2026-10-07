@@ -17,6 +17,7 @@ const (
 	defaultEgressLogLimit = 200
 	maxEgressLogLimit     = 500
 	maxEgressLogLine      = 256 * 1024
+	maxEgressLogRead      = 4 * 1024 * 1024
 )
 
 type egressLogRow map[string]any
@@ -43,7 +44,7 @@ func (s *Server) getEgressLogs(w http.ResponseWriter, r *http.Request) {
 	var names []string
 	for _, entry := range entries {
 		name := entry.Name()
-		if !entry.IsDir() && (name == "egress.jsonl" || strings.HasPrefix(name, "egress.jsonl.")) {
+		if !entry.IsDir() && (name == "egress.jsonl" || name == "egress.jsonl.1") {
 			names = append(names, name)
 		}
 	}
@@ -56,7 +57,21 @@ func (s *Server) getEgressLogs(w http.ResponseWriter, r *http.Request) {
 		if openErr != nil {
 			continue
 		}
-		scanner := bufio.NewScanner(io.LimitReader(file, 128*1024*1024))
+		stat, statErr := file.Stat()
+		if statErr != nil {
+			_ = file.Close()
+			continue
+		}
+		start := stat.Size() - maxEgressLogRead
+		var reader io.Reader = file
+		if start > 0 {
+			_, _ = file.Seek(start, io.SeekStart)
+			// Discard the partial JSON line at the seek boundary.
+			buffered := bufio.NewReader(file)
+			_, _ = buffered.ReadString('\n')
+			reader = buffered
+		}
+		scanner := bufio.NewScanner(io.LimitReader(reader, maxEgressLogRead))
 		scanner.Buffer(make([]byte, 64*1024), maxEgressLogLine)
 		for scanner.Scan() {
 			line := scanner.Bytes()
