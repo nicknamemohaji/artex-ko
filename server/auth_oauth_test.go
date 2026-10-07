@@ -121,6 +121,39 @@ func TestOAuthApprovalAndDisableTakeEffectImmediately(t *testing.T) {
 	}
 }
 
+func TestRegularUserCannotAccessPhaseOneAdminResources(t *testing.T) {
+	m, err := NewManager(t.TempDir(), "")
+	if err != nil || m.PG() == nil {
+		t.Skipf("postgres unavailable: %v", err)
+	}
+	defer m.Close()
+	u, err := m.PG().UpsertGoogleUser("phase-one-policy", "phase-one@example.com", "User", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = m.PG().Exec(`DELETE FROM auth_users WHERE id=$1`, u.ID) })
+	if _, err = m.PG().UpdateAuthUserAccess(u.ID, "approved", "user"); err != nil {
+		t.Fatal(err)
+	}
+	s := New(context.Background(), m, t.TempDir(), t.TempDir(), t.TempDir())
+	tok, _ := signUserJWT(s.jwtKey, u.Email, u.ID, "user", u.Email)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/api/workspace/list"},
+		{http.MethodGet, "/api/traffic"},
+		{http.MethodGet, "/api/tokens/daily"},
+		{http.MethodPost, "/api/task-templates"},
+		{http.MethodGet, "/api/exploration/findings"},
+	} {
+		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))
+		r.Header.Set("Authorization", "Bearer "+tok)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s %s status=%d, want 403", tc.method, tc.path, w.Code)
+		}
+	}
+}
+
 func TestRegularUserCannotUseAdminAPI(t *testing.T) {
 	key := []byte(strings.Repeat("a", 32))
 	tok, err := signUserJWT(key, "user@example.com", 0, "user", "user@example.com")
@@ -140,17 +173,17 @@ func TestRegularUserCannotUseAdminAPI(t *testing.T) {
 }
 
 func TestAdminOnlyAPIBoundaries(t *testing.T) {
-	for _, p := range []string{"/api/update/check", "/api/llm", "/api/llm/profiles/active", "/api/settings", "/api/agents/x", "/api/triggers/1", "/api/tools", "/api/mcp", "/api/intercept/rules", "/api/intercept/judge", "/api/skills", "/api/logs/stream"} {
+	for _, p := range []string{"/api/update/check", "/api/llm", "/api/llm/profiles/active", "/api/settings", "/api/agents/x", "/api/triggers/1", "/api/tools", "/api/mcp", "/api/intercept/rules", "/api/intercept/judge", "/api/skills", "/api/logs/stream", "/api/workspace/list", "/api/traffic", "/api/assets", "/api/companies", "/api/exploration/findings", "/api/tokens/daily"} {
 		if !adminOnlyAPI(http.MethodGet, p) {
 			t.Errorf("not protected: %s", p)
 		}
 	}
-	for _, p := range []string{"/api/tasks", "/api/chat", "/api/assets", "/api/intercept/pending", "/api/intercept/pending/1", "/api/intercept/history", "/api/llm/profiles"} {
+	for _, p := range []string{"/api/tasks", "/api/chat", "/api/llm/profiles", "/api/task-categories", "/api/task-templates"} {
 		if adminOnlyAPI(http.MethodGet, p) {
 			t.Errorf("unexpected admin-only: %s", p)
 		}
 	}
-	for _, p := range []string{"/api/intercept/pending/1/decide", "/api/sync/scopesentry/projects"} {
+	for _, p := range []string{"/api/sync/scopesentry/projects"} {
 		if adminOnlyAPI(http.MethodPost, p) {
 			t.Errorf("approved-user flow blocked: %s", p)
 		}

@@ -149,10 +149,19 @@ export default function DashboardPage() {
   const [skills, setSkills] = React.useState<SkillItem[]>([]);
   const [tools, setTools] = React.useState<Tool[]>([]);
   const [llmProfiles, setLLMProfiles] = React.useState<LLMProfile[]>([]);
+  const [isAdmin, setIsAdmin] = React.useState<boolean | null>(null);
+
+  React.useEffect(() => {
+    api
+      .authMe()
+      .then((me) => setIsAdmin(me.role === "admin"))
+      .catch(() => setIsAdmin(false));
+  }, []);
 
   // The task list is the most expensive dashboard source. Poll it independently
   // so a large history cannot hold back every other dashboard panel.
   React.useEffect(() => {
+    if (isAdmin === null) return;
     let alive = true;
     let loading = false;
     let signature = "";
@@ -179,33 +188,36 @@ export default function DashboardPage() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [isAdmin]);
 
   // The remaining fast sources stay batched so one poll causes a single render.
   React.useEffect(() => {
+    if (isAdmin === null) return;
     let alive = true;
     let loading = false;
     const load = async () => {
       if (loading) return;
       loading = true;
       try {
-        const [findings, stats, settings, pending, activity, tokens, conversationTokens] = await Promise.all([
-          api.findings(),
-          api.stats(),
-          api.settings(),
-          api.interceptPending(),
-          api.activity(undefined, { limit: 30 }),
-          api.tokenStats(),
-          api.conversationTokens(),
-        ]);
+        const [stats, conversationTokens] = await Promise.all([api.stats(), api.conversationTokens()]);
         if (!alive) return;
-        setFindings(findings);
         setStats(stats);
-        setSettings(settings);
-        setPending(pending);
-        setActivity(activity.items);
-        setTokens(tokens.total ?? null);
         setConvTokens(conversationTokens);
+        if (isAdmin) {
+          const [findings, settings, pending, activity, tokens] = await Promise.all([
+            api.findings(),
+            api.settings(),
+            api.interceptPending(),
+            api.activity(undefined, { limit: 30 }),
+            api.tokenStats(),
+          ]);
+          if (!alive) return;
+          setFindings(findings);
+          setSettings(settings);
+          setPending(pending);
+          setActivity(activity.items);
+          setTokens(tokens.total ?? null);
+        }
       } catch {
         // Preserve stale data and retry on the next interval.
       } finally {
@@ -218,32 +230,35 @@ export default function DashboardPage() {
       alive = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [isAdmin]);
 
   // slow poll: traffic, assets, system-static (every 15s)
   React.useEffect(() => {
+    if (isAdmin === null) return;
     let alive = true;
     const load = async () => {
       try {
-        const [traf, counts, agentList, mcpList, skillList, toolList, profileList, usage] = await Promise.all([
-          api.traffic(0, 50),
-          api.assetCounts(),
-          api.agents(),
-          api.mcpServers(),
-          api.skills(),
-          api.tools(),
-          api.llmProfiles(),
-          api.usageStats(365),
-        ]);
+        const [profileList, usage] = await Promise.all([api.llmProfiles(), api.usageStats(365)]);
         if (!alive) return;
-        setTraffic(traf.exchanges ?? []);
-        setAssetCounts(counts ?? {});
-        setAgents(agentList);
-        setMcpServers(mcpList);
-        setSkills(skillList);
-        setTools(toolList);
         setLLMProfiles(profileList);
         setUsageStats(usage);
+        if (isAdmin) {
+          const [traf, counts, agentList, mcpList, skillList, toolList] = await Promise.all([
+            api.traffic(0, 50),
+            api.assetCounts(),
+            api.agents(),
+            api.mcpServers(),
+            api.skills(),
+            api.tools(),
+          ]);
+          if (!alive) return;
+          setTraffic(traf.exchanges ?? []);
+          setAssetCounts(counts ?? {});
+          setAgents(agentList);
+          setMcpServers(mcpList);
+          setSkills(skillList);
+          setTools(toolList);
+        }
       } catch {
         /* transient errors */
       }
@@ -254,7 +269,7 @@ export default function DashboardPage() {
       alive = false;
       clearInterval(t);
     };
-  }, []);
+  }, [isAdmin]);
 
   // ── derived ───────────────────────────────────────────────────────────────
 

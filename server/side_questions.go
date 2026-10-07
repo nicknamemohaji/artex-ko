@@ -539,6 +539,10 @@ func (s *Server) cancelSideRequest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "side question not found")
 		return
 	}
+	if !s.sideExchangeAccessible(r, e) {
+		writeErr(w, 404, "side question not found")
+		return
+	}
 	s.side.mu.Lock()
 	if run, ok := s.side.runs[e.ID]; ok {
 		run.cancel()
@@ -560,6 +564,10 @@ func (s *Server) sideEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if first == nil {
+		writeErr(w, 404, "side question not found")
+		return
+	}
+	if !s.sideExchangeAccessible(r, first) {
 		writeErr(w, 404, "side question not found")
 		return
 	}
@@ -605,4 +613,33 @@ func (s *Server) sideEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) sideExchangeAccessible(r *http.Request, e *sidequestion.Exchange) bool {
+	uid, admin := requestIdentity(r)
+	if admin {
+		return true
+	}
+	if uid <= 0 || e == nil {
+		return false
+	}
+	if strings.HasPrefix(e.SessionKey, "conv-") {
+		id, err := strconv.ParseInt(strings.TrimPrefix(e.SessionKey, "conv-"), 10, 64)
+		if err != nil {
+			return false
+		}
+		ok, _ := s.m.pg.ConversationOwnedBy(id, uid)
+		return ok
+	}
+	if strings.HasPrefix(e.SessionKey, "task-") {
+		part := strings.TrimPrefix(e.SessionKey, "task-")
+		idText, _, _ := strings.Cut(part, "-")
+		id, err := strconv.ParseInt(idText, 10, 64)
+		if err != nil {
+			return false
+		}
+		ok, _ := s.m.pg.TaskOwnedBy(id, uid)
+		return ok
+	}
+	return false
 }

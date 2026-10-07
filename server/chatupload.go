@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/Autumn-27/artex/db"
@@ -59,6 +60,7 @@ type chatAttachment struct {
 //	scope=staging → <workDir>/drafts/<id>/uploads/   (建任务前暂存:任务尚无 ID,
 //	                文件先落这里,前端按返回的 abs 绝对路径写进任务描述)
 func (s *Server) chatUpload(w http.ResponseWriter, r *http.Request) {
+	uid, admin := requestIdentity(r)
 	var sub string
 	taskScoped := false
 	switch r.URL.Query().Get("scope") {
@@ -77,6 +79,30 @@ func (s *Server) chatUpload(w http.ResponseWriter, r *http.Request) {
 	if !safeChatID.MatchString(id) {
 		writeErr(w, 400, errChatUploadBadID)
 		return
+	}
+	// Authentication middleware always supplies either an admin claim or a
+	// positive OAuth user id. Keep direct handler tests (which have no claim)
+	// exercising the upload validation itself.
+	if !admin && uid > 0 {
+		switch {
+		case taskScoped:
+			taskID, err := strconv.ParseInt(id, 10, 64)
+			owned, ownErr := s.m.PG().TaskOwnedBy(taskID, uid)
+			if err != nil || ownErr != nil || !owned {
+				writeErr(w, 404, "task not found")
+				return
+			}
+		case strings.HasPrefix(id, "conv-"):
+			convID, err := strconv.ParseInt(strings.TrimPrefix(id, "conv-"), 10, 64)
+			owned, ownErr := s.m.PG().ConversationOwnedBy(convID, uid)
+			if err != nil || ownErr != nil || !owned {
+				writeErr(w, 404, "conversation not found")
+				return
+			}
+		default:
+			writeErr(w, 403, authErrAdminRequired)
+			return
+		}
 	}
 	if taskScoped {
 		if s.m.ResolveTask(id) == nil {

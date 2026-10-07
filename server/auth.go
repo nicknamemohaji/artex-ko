@@ -227,10 +227,16 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 }
 
 func adminOnlyAPI(method, path string) bool {
-	for _, prefix := range []string{"/api/update", "/api/settings", "/api/agents", "/api/triggers", "/api/tools", "/api/mcp", "/api/asset-intercept", "/api/skills", "/api/visibility", "/api/notify", "/api/logs", "/api/commands", "/api/audit", "/api/gc"} {
+	for _, prefix := range []string{"/api/update", "/api/settings", "/api/agents", "/api/triggers", "/api/tools", "/api/mcp", "/api/asset-intercept", "/api/skills", "/api/visibility", "/api/notify", "/api/logs", "/api/commands", "/api/audit", "/api/gc", "/api/workspace", "/api/traffic", "/api/assets", "/api/companies", "/api/exploration/findings", "/api/intercept", "/api/task-archives"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
+	}
+	if path == "/api/tokens/daily" {
+		return true
+	}
+	if method != http.MethodGet && (strings.HasPrefix(path, "/api/task-categories") || strings.HasPrefix(path, "/api/task-templates")) {
+		return true
 	}
 	if path == "/api/llm/profiles" && method == http.MethodGet {
 		return false
@@ -310,6 +316,9 @@ func (s *Server) authorizeOwnedResources(next http.Handler) http.Handler {
 		// from every tenant. A regular user must use a task-scoped view.
 		if strings.HasPrefix(r.URL.Path, "/api/logs") ||
 			strings.HasPrefix(r.URL.Path, "/api/task-archives") ||
+			strings.HasPrefix(r.URL.Path, "/api/workspace") ||
+			strings.HasPrefix(r.URL.Path, "/api/traffic") ||
+			r.URL.Path == "/api/tokens/daily" ||
 			strings.HasPrefix(r.URL.Path, "/api/assets") ||
 			strings.HasPrefix(r.URL.Path, "/api/companies") ||
 			strings.HasPrefix(r.URL.Path, "/api/exploration/findings") ||
@@ -317,6 +326,10 @@ func (s *Server) authorizeOwnedResources(next http.Handler) http.Handler {
 			(strings.HasPrefix(r.URL.Path, "/api/tasks/") && strings.HasSuffix(r.URL.Path, "/batch")) ||
 			(strings.HasPrefix(r.URL.Path, "/api/llm/records") && r.URL.Query().Get("task") == "") ||
 			(strings.HasPrefix(r.URL.Path, "/api/commands") && r.URL.Query().Get("task") == "") {
+			writeErr(w, 403, authErrAdminRequired)
+			return
+		}
+		if (strings.HasPrefix(r.URL.Path, "/api/task-categories") || strings.HasPrefix(r.URL.Path, "/api/task-templates")) && r.Method != http.MethodGet {
 			writeErr(w, 403, authErrAdminRequired)
 			return
 		}

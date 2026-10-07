@@ -1115,7 +1115,9 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 	uid, admin := requestIdentity(r)
 	active := ""
 	if t := s.m.ActiveTask(); t != nil {
-		active = t.ID
+		if admin || (t.OwnerUserID != nil && *t.OwnerUserID == uid) {
+			active = t.ID
+		}
 	}
 	list := s.m.List()
 	metrics, _ := s.m.PG().TaskListMetricsAll()
@@ -1179,6 +1181,14 @@ func (s *Server) setActive(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if uid, admin := requestIdentity(r); !admin {
+		id, err := strconv.ParseInt(strings.TrimSpace(req.ID), 10, 64)
+		owned, ownErr := s.m.PG().TaskOwnedBy(id, uid)
+		if err != nil || ownErr != nil || !owned {
+			writeErr(w, 404, "task not found")
+			return
+		}
 	}
 	if !s.m.SetActive(req.ID) {
 		writeErr(w, 404, "task not found")
@@ -3752,6 +3762,15 @@ func (s *Server) newMainSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
+	if uid, admin := requestIdentity(r); !admin {
+		raw := strings.TrimSpace(r.URL.Query().Get("task"))
+		id, err := strconv.ParseInt(raw, 10, 64)
+		owned, ownErr := s.m.PG().TaskOwnedBy(id, uid)
+		if raw == "" || err != nil || ownErr != nil || !owned {
+			writeErr(w, 404, "task not found")
+			return
+		}
+	}
 	t := s.m.ResolveTask(r.URL.Query().Get("task"))
 	if t == nil {
 		writeErr(w, 404, "no active task")
