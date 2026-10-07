@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -133,6 +135,48 @@ func TestRegularUserCannotUseAdminAPI(t *testing.T) {
 		t.Fatal("regular user accepted as admin")
 	}
 	if w.Code != http.StatusForbidden {
+		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestAdminOnlyAPIBoundaries(t *testing.T) {
+	for _, p := range []string{"/api/update/check", "/api/llm", "/api/settings", "/api/agents/x", "/api/tools", "/api/mcp", "/api/intercept/rules", "/api/skills", "/api/logs/stream"} {
+		if !adminOnlyAPI(p) {
+			t.Errorf("not protected: %s", p)
+		}
+	}
+	for _, p := range []string{"/api/tasks", "/api/chat", "/api/assets"} {
+		if adminOnlyAPI(p) {
+			t.Errorf("unexpected admin-only: %s", p)
+		}
+	}
+}
+
+func TestLogoutClearsHttpOnlyCookie(t *testing.T) {
+	t.Setenv("ARTEX_GOOGLE_REDIRECT_URL", "https://artex.example/api/auth/google/callback")
+	w := httptest.NewRecorder()
+	(&Server{}).authLogout(w, httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil))
+	c := w.Result().Cookies()[0]
+	if c.Name != "artex_token" || c.MaxAge != -1 || !c.HttpOnly || !c.Secure || c.Path != "/" {
+		t.Fatalf("cookie=%#v", c)
+	}
+}
+
+func TestOAuthTransactionCap(t *testing.T) {
+	t.Setenv("ARTEX_GOOGLE_CLIENT_ID", "id")
+	t.Setenv("ARTEX_GOOGLE_CLIENT_SECRET", "secret")
+	t.Setenv("ARTEX_GOOGLE_REDIRECT_URL", "https://artex.example/api/auth/google/callback")
+	oauthTransactions.Lock()
+	old := oauthTransactions.m
+	oauthTransactions.m = make(map[string]oauthTransaction, 1024)
+	for i := 0; i < 1024; i++ {
+		oauthTransactions.m[fmt.Sprint(i)] = oauthTransaction{expires: time.Now().Add(time.Minute)}
+	}
+	oauthTransactions.Unlock()
+	defer func() { oauthTransactions.Lock(); oauthTransactions.m = old; oauthTransactions.Unlock() }()
+	w := httptest.NewRecorder()
+	(&Server{}).authGoogleStart(w, httptest.NewRequest(http.MethodGet, "/api/auth/google", nil))
+	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status=%d", w.Code)
 	}
 }

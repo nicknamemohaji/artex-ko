@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var ErrLastApprovedAdmin = errors.New("마지막 승인 관리자는 강등하거나 사용 중지할 수 없습니다")
+
 type AuthUser struct {
 	ID          int64      `json:"id"`
 	Provider    string     `json:"provider"`
@@ -67,9 +69,35 @@ func (d *DB) ListAuthUsers() ([]AuthUser, error) {
 }
 
 func (d *DB) UpdateAuthUserAccess(id int64, status, role string) (*AuthUser, error) {
-	u, err := scanAuthUser(d.QueryRow(`UPDATE auth_users SET status=$2,role=$3,updated_at=now() WHERE id=$1 RETURNING `+authUserColumns, id, status, role))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
+	tx, err := d.Begin()
+	if err != nil {
+		return nil, err
 	}
-	return u, err
+	defer tx.Rollback()
+	var currentStatus, currentRole string
+	if err = tx.QueryRow(`SELECT status,role FROM auth_users WHERE id=$1 FOR UPDATE`, id).Scan(&currentStatus, &currentRole); errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	if currentStatus == "approved" && currentRole == "admin" && (status != "approved" || role != "admin") {
+		if _, err = tx.Exec(`SELECT pg_advisory_xact_lock(7337741011)`); err != nil {
+			return nil, err
+		}
+		var n int
+		if err = tx.QueryRow(`SELECT count(*) FROM auth_users WHERE status='approved' AND role='admin'`).Scan(&n); err != nil {
+			return nil, err
+		}
+		if n <= 1 {
+			return nil, ErrLastApprovedAdmin
+		}
+	}
+	u, err := scanAuthUser(tx.QueryRow(`UPDATE auth_users SET status=$2,role=$3,updated_at=now() WHERE id=$1 RETURNING `+authUserColumns, id, status, role))
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return u, nil
 }
