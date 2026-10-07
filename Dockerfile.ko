@@ -1,0 +1,43 @@
+# syntax=docker/dockerfile:1
+# Build the Korean UI and Go binary inside Docker. The upstream image supplies
+# the same runtime tools as Dockerfile; its multi-arch digest is pinned so a new
+# upstream release cannot silently change this image's runtime.
+FROM --platform=$BUILDPLATFORM node:22-bookworm-slim AS frontend
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=secret,id=proxy_ca \
+    if [ -s /run/secrets/proxy_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/proxy_ca; fi; \
+    npm ci --strict-ssl=true
+COPY web/ ./
+RUN npm run build:static
+
+FROM --platform=$BUILDPLATFORM golang:1.26.3-bookworm AS binary
+ARG TARGETOS
+ARG TARGETARCH
+ARG ARTEX_BUILD_VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=secret,id=proxy_ca \
+    if [ -s /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
+    go mod download
+COPY . ./
+COPY --from=frontend /src/web/out/ /src/server/webui/dist/
+# The ko- prefix keeps the upstream one-click binary updater from replacing
+# this Korean build with an official Chinese-language release.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=secret,id=proxy_ca \
+    if [ -s /run/secrets/proxy_ca ]; then export SSL_CERT_FILE=/run/secrets/proxy_ca; fi; \
+    CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+      go build -tags embedui -trimpath \
+        -ldflags "-s -w -buildid= -X main.version=ko-${ARTEX_BUILD_VERSION}" \
+        -o /out/artex ./cmd/artex
+
+FROM scratch AS korean-files
+COPY --from=binary /out/artex /app/artex
+COPY start.sh /app/start.sh
+COPY skills/ /app/skills/
+
+FROM autumn27/artex@sha256:3b0cfece9b7cecdc480fc34ea24b32ae734489126bfb995d9d7df7e11be6f78d
+COPY --link --from=korean-files /app/ /app/

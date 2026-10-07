@@ -86,17 +86,17 @@ ARTEX 는 **자신이 소유하거나 서면으로 명시적 허가를 받은 �
 
 > **사전 요구:** Docker 와 Docker Compose. 데이터베이스는 **PostgreSQL** 이며 compose 가 함께 띄웁니다. 탐색에는 **LLM** 이 필요합니다(`ANTHROPIC_API_KEY` 또는 `OPENAI_API_KEY`, UI 에서도 설정 가능).
 
-> **⚠️ 지금 이 compose 가 내려받는 이미지는 상류(원본) 중국어 빌드입니다.** `docker-compose.yml` 의 `artex` 서비스는 원작자가 Docker Hub 에 올린 `autumn27/artex` 이미지를 받습니다. 이 이미지는 **중국어 UI 와 중국어 출력**이라서, 이 저장소가 더한 한국어화(한국어 UI·한국어 리포트·`langDirective`)는 **아직 담겨 있지 않습니다**. 한국어판 화면과 출력을 확인하려면 지금은 아래 ["그 밖의 설치 방법"](#그-밖의-설치-방법)에 있는 **소스에서 단일 바이너리 컴파일** 경로로 직접 빌드하십시오. 한국어판 Docker 이미지의 배포는 준비 중입니다.
+Compose 는 `Dockerfile.ko` 로 이 저장소의 한국어 UI 와 Go 서버를 이미지 안에서 빌드합니다. 호스트에 Go 나 Node.js 를 설치할 필요가 없습니다.
 
 ```bash
 git clone https://github.com/jiwoochris/artex-ko.git
 cd artex-ko
 cp .env.example .env          # POSTGRES_PASSWORD 설정, ANTHROPIC_API_KEY 는 선택
-docker compose up -d          # artex 이미지 + postgres 를 함께 기동
+docker compose up -d --build  # 한국어판 이미지 빌드 후 PostgreSQL 과 함께 기동
 # → http://localhost:8787 접속 (처음 들어가면 /setup 에서 관리자 비밀번호 설정)
 ```
 
-위 상류 이미지에는 자주 쓰는 도구(ripgrep·curl·vim·npm·nmap 등)가 들어 있습니다. `./skills` 와 `./data` 는 바인드 마운트로 호스트에 남아 컨테이너를 다시 만들어도 보존됩니다.
+한국어판 이미지에는 자주 쓰는 도구(ripgrep·curl·vim·npm·nmap 등)가 들어 있습니다. `./skills` 와 `./data` 는 바인드 마운트로 호스트에 남아 컨테이너를 다시 만들어도 보존됩니다. 소스를 갱신한 뒤에는 `docker compose up -d --build artex` 로 이미지를 다시 빌드하십시오. 한국어판 컨테이너는 `ko` 접두 버전으로 빌드되어 UI 의 바이너리 원클릭 업데이트가 비활성화됩니다.
 
 ### 그 밖의 설치 방법
 

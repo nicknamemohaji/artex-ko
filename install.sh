@@ -45,9 +45,8 @@ install_docker(){
   else
     info "이미 있는 .env 파일을 그대로 사용합니다"
   fi
-  info "이미지를 받아 기동합니다…"
-  docker compose pull || true
-  docker compose up -d
+  info "한국어판 이미지를 빌드하고 기동합니다…"
+  docker compose up -d --build
   ok "기동을 완료했습니다 → http://localhost:8787"
   info "로그 확인: docker compose logs -f artex"
 }

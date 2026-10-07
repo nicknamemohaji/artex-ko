@@ -15,7 +15,13 @@ services:
     restart: unless-stopped
 
   artex:
-    image: autumn27/artex:${ARTEX_TAG:-latest}
+    image: artex-ko:${ARTEX_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile.ko
+      args:
+        ARTEX_BUILD_VERSION: ${ARTEX_BUILD_VERSION:-dev}
+    pull_policy: build
     depends_on:
       postgres:
         condition: service_healthy

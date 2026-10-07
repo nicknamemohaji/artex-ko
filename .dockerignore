@@ -1,4 +1,14 @@
 .git
+.env
+.env.*
+**/.env.*
+*.env
+config.json
+secrets.env
+work
+test-results
+scan-output
+evidence-local
 **/node_modules
 web/.next
 web/out
