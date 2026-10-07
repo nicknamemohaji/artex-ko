@@ -16,6 +16,7 @@ import (
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
 	"github.com/Autumn-27/artex/intercept"
+	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/artex/sidequestion"
 )
 
@@ -629,6 +630,9 @@ func (s *Server) runConversationTurn(ctx context.Context, cancel context.CancelC
 		webSearch = a.WebSearch
 	}
 	sessionID := s.convBusyKey(c.ID) // "conv-<id>" transcript session
+	if c.OwnerUserID != nil {
+		ctx = llmrec.WithUserID(ctx, *c.OwnerUserID)
+	}
 	emit := func(rec db.Activity) {
 		if _, err := pg.AppendConvActivity(c.ID, rec); err != nil {
 			log.Printf("[conv %d] append activity failed: %v", c.ID, err)

@@ -449,6 +449,10 @@ func (s *Server) runSide(ctx context.Context, cancel context.CancelFunc, e sideq
 	ctx = transcript.WithSessionID(ctx, fmt.Sprintf("exp%d-btw-%s", parent.ExplorationID, e.ID))
 	if parent.TaskID > 0 {
 		ctx = llmrec.WithTaskID(ctx, strconv.FormatInt(parent.TaskID, 10))
+	} else if parent.ConversationID > 0 {
+		if c, _ := s.m.pg.GetConversation(parent.ConversationID); c != nil && c.OwnerUserID != nil {
+			ctx = llmrec.WithUserID(ctx, *c.OwnerUserID)
+		}
 	}
 	// Deletions can race between request insertion and registration. Observe the
 	// persisted lifecycle even while a provider is blocked without emitting text.

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Autumn-27/artex/agent"
 	"github.com/Autumn-27/artex/db"
+	"github.com/Autumn-27/artex/llmrec"
 	"github.com/Autumn-27/norma/permission"
 	actool "github.com/Autumn-27/norma/tool"
 )
@@ -251,7 +252,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			"plan_heartbeat_seconds": map[string]any{"type": "integer", "description": "可选：planner 心跳触发间隔(秒)。距上轮规划结束/任务开始满该值且期间无触发 → 触发一轮规划(兜底死锁 + 唤醒去监督飞行中的 worker)。留空或 0 = 默认 600(10min)；"},
 			"seed_first_intent":      map[string]any{"type": "boolean", "description": "可选：对于简单任务可开启，创建时直接下发一条种子意图(内容=描述+目标)让 worker 免等首轮 planner 直接开跑测试；默认 false(走标准先规划再执行)。"},
 		}, "description", "goal"),
-		func(_ context.Context, in json.RawMessage) (actool.Result, error) {
+		func(ctx context.Context, in json.RawMessage) (actool.Result, error) {
 			var a struct {
 				Description          string          `json:"description"`
 				Goal                 string          `json:"goal"`
@@ -272,6 +273,25 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 			if a.TimeoutSeconds < 0 {
 				a.TimeoutSeconds = 0
 			}
+			ownerUserID := llmrec.UserIDFrom(ctx)
+			if ownerUserID == 0 {
+				if callerTaskID, err := strconv.ParseInt(llmrec.TaskIDFrom(ctx), 10, 64); err == nil {
+					ownerUserID = s.m.PG().TaskOwnerUserID(callerTaskID)
+				}
+			}
+			if a.ParentRef != "" {
+				parentID, err := strconv.ParseInt(strings.TrimSpace(a.ParentRef), 10, 64)
+				if err != nil || parentID <= 0 {
+					return actool.Errorf("부모 작업 id가 올바르지 않습니다"), nil
+				}
+				parentOwner := s.m.PG().TaskOwnerUserID(parentID)
+				if ownerUserID > 0 && parentOwner != ownerUserID {
+					return actool.Errorf("부모 작업을 찾을 수 없습니다"), nil
+				}
+				if ownerUserID == 0 {
+					ownerUserID = parentOwner
+				}
+			}
 			// 只读继承来源任务：数量上限 + 每个 id 有效/去重/存在，校验规则与 HTTP 建任务一致。
 			if len(a.SourceTaskIDs) > db.MaxTaskSourceCount {
 				return actool.Errorf(fmt.Sprintf("关联任务最多选择 %d 个", db.MaxTaskSourceCount)), nil
@@ -285,6 +305,12 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				}
 				if _, ok := s.m.Task(strconv.FormatInt(id, 10)); !ok {
 					return actool.Errorf(fmt.Sprintf("关联任务 #%d 不存在", id)), nil
+				}
+				if ownerUserID > 0 {
+					owned, ownErr := s.m.PG().TaskOwnedBy(id, ownerUserID)
+					if ownErr != nil || !owned {
+						return actool.Errorf(fmt.Sprintf("关联任务 #%d 不存在", id)), nil
+					}
 				}
 				seenSources[id] = true
 				sourceIDs = append(sourceIDs, id)
@@ -306,6 +332,7 @@ func (s *Server) toolSpawnTask() actool.CoreTool {
 				llmIDs = []int64{*pin}
 			}
 			t, err := s.m.CreateTaskWithOptions(a.Description, a.Goal, db.TaskCreateOptions{
+				OwnerUserID:          ownerUserID,
 				SourceTaskIDs:        sourceIDs,
 				LLMProfileIDs:        llmIDs,
 				TimeoutSeconds:       a.TimeoutSeconds,

@@ -310,6 +310,10 @@ func (s *Server) authorizeOwnedResources(next http.Handler) http.Handler {
 		// from every tenant. A regular user must use a task-scoped view.
 		if strings.HasPrefix(r.URL.Path, "/api/logs") ||
 			strings.HasPrefix(r.URL.Path, "/api/task-archives") ||
+			strings.HasPrefix(r.URL.Path, "/api/assets") ||
+			strings.HasPrefix(r.URL.Path, "/api/companies") ||
+			strings.HasPrefix(r.URL.Path, "/api/exploration/findings") ||
+			strings.HasPrefix(r.URL.Path, "/api/intercept") ||
 			(strings.HasPrefix(r.URL.Path, "/api/tasks/") && strings.HasSuffix(r.URL.Path, "/batch")) ||
 			(strings.HasPrefix(r.URL.Path, "/api/llm/records") && r.URL.Query().Get("task") == "") ||
 			(strings.HasPrefix(r.URL.Path, "/api/commands") && r.URL.Query().Get("task") == "") {

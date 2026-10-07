@@ -41,6 +41,16 @@ func TestTaskIDContextUsesExplicitRegistryID(t *testing.T) {
 	}
 }
 
+func TestUserIDContext(t *testing.T) {
+	ctx := WithUserID(context.Background(), 42)
+	if got := UserIDFrom(ctx); got != 42 {
+		t.Fatalf("UserIDFrom()=%d, want 42", got)
+	}
+	if got := UserIDFrom(WithUserID(ctx, 0)); got != 42 {
+		t.Fatalf("zero id replaced owner: %d", got)
+	}
+}
+
 func TestParseSessionFallbackIsExplorationScoped(t *testing.T) {
 	taskID, worker := parseSession("exp12-worker-i99")
 	if taskID != "12" || worker != "worker" {
