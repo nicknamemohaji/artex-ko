@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -62,8 +63,8 @@ type authClaims struct {
 }
 
 type oauthTransaction struct {
-	verifier, nonce string
-	expires         time.Time
+	verifier, nonce, client string
+	created, expires        time.Time
 }
 
 var oauthTransactions = struct {
@@ -216,18 +217,32 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 			}
 		}
 		r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, claims))
-		if adminOnlyAPI(p) && !s.requireAdmin(w, r) {
+		if adminOnlyAPI(r.Method, p) && !s.requireAdmin(w, r) {
 			return
 		}
 		h.ServeHTTP(w, r)
 	})
 }
 
-func adminOnlyAPI(path string) bool {
-	for _, prefix := range []string{"/api/update", "/api/llm", "/api/settings", "/api/agents", "/api/tools", "/api/mcp", "/api/intercept", "/api/asset-intercept", "/api/skills", "/api/visibility", "/api/notify", "/api/logs", "/api/commands", "/api/audit", "/api/gc"} {
+func adminOnlyAPI(method, path string) bool {
+	for _, prefix := range []string{"/api/update", "/api/settings", "/api/agents", "/api/triggers", "/api/tools", "/api/mcp", "/api/asset-intercept", "/api/skills", "/api/visibility", "/api/notify", "/api/logs", "/api/commands", "/api/audit", "/api/gc"} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {
 			return true
 		}
+	}
+	if path == "/api/llm/profiles" && method == http.MethodGet {
+		return false
+	}
+	if path == "/api/llm" || strings.HasPrefix(path, "/api/llm/") {
+		return true
+	}
+	for _, prefix := range []string{"/api/intercept/rules", "/api/intercept/tool-config", "/api/intercept/judge"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	if method != http.MethodGet && (path == "/api/sync/scopesentry/datasource" || path == "/api/sync/scopesentry/sync") {
+		return true
 	}
 	return false
 }
@@ -288,6 +303,10 @@ func (s *Server) authGoogleStart(w http.ResponseWriter, r *http.Request) {
 	}
 	verifier, _ := randomURLToken(48)
 	nonce, _ := randomURLToken(32)
+	client := r.RemoteAddr
+	if host, _, splitErr := net.SplitHostPort(r.RemoteAddr); splitErr == nil {
+		client = host
+	}
 	oauthTransactions.Lock()
 	now := time.Now()
 	for k, v := range oauthTransactions.m {
@@ -295,12 +314,32 @@ func (s *Server) authGoogleStart(w http.ResponseWriter, r *http.Request) {
 			delete(oauthTransactions.m, k)
 		}
 	}
-	if len(oauthTransactions.m) >= 1024 {
+	if old, cookieErr := r.Cookie("artex_oauth_state"); cookieErr == nil {
+		delete(oauthTransactions.m, old.Value)
+	}
+	clientActive := 0
+	for _, tx := range oauthTransactions.m {
+		if tx.client == client {
+			clientActive++
+		}
+	}
+	if clientActive >= 10 {
 		oauthTransactions.Unlock()
+		w.Header().Set("Retry-After", "60")
 		writeErr(w, http.StatusTooManyRequests, "로그인 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요")
 		return
 	}
-	oauthTransactions.m[state] = oauthTransaction{verifier, nonce, now.Add(10 * time.Minute)}
+	if len(oauthTransactions.m) >= 1024 {
+		var oldestKey string
+		var oldest time.Time
+		for key, tx := range oauthTransactions.m {
+			if oldestKey == "" || tx.created.Before(oldest) {
+				oldestKey, oldest = key, tx.created
+			}
+		}
+		delete(oauthTransactions.m, oldestKey)
+	}
+	oauthTransactions.m[state] = oauthTransaction{verifier: verifier, nonce: nonce, client: client, created: now, expires: now.Add(10 * time.Minute)}
 	oauthTransactions.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "artex_oauth_state", Value: state, Path: "/api/auth/google/callback", MaxAge: 600, HttpOnly: true, Secure: strings.HasPrefix(strings.ToLower(c.redirectURL), "https://"), SameSite: http.SameSiteLaxMode})
 	sum := sha256.Sum256([]byte(verifier))

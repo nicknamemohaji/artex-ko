@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -140,14 +139,24 @@ func TestRegularUserCannotUseAdminAPI(t *testing.T) {
 }
 
 func TestAdminOnlyAPIBoundaries(t *testing.T) {
-	for _, p := range []string{"/api/update/check", "/api/llm", "/api/settings", "/api/agents/x", "/api/tools", "/api/mcp", "/api/intercept/rules", "/api/skills", "/api/logs/stream"} {
-		if !adminOnlyAPI(p) {
+	for _, p := range []string{"/api/update/check", "/api/llm", "/api/llm/profiles/active", "/api/settings", "/api/agents/x", "/api/triggers/1", "/api/tools", "/api/mcp", "/api/intercept/rules", "/api/intercept/judge", "/api/skills", "/api/logs/stream"} {
+		if !adminOnlyAPI(http.MethodGet, p) {
 			t.Errorf("not protected: %s", p)
 		}
 	}
-	for _, p := range []string{"/api/tasks", "/api/chat", "/api/assets"} {
-		if adminOnlyAPI(p) {
+	for _, p := range []string{"/api/tasks", "/api/chat", "/api/assets", "/api/intercept/pending", "/api/intercept/pending/1", "/api/intercept/history", "/api/llm/profiles"} {
+		if adminOnlyAPI(http.MethodGet, p) {
 			t.Errorf("unexpected admin-only: %s", p)
+		}
+	}
+	for _, p := range []string{"/api/intercept/pending/1/decide", "/api/sync/scopesentry/projects"} {
+		if adminOnlyAPI(http.MethodPost, p) {
+			t.Errorf("approved-user flow blocked: %s", p)
+		}
+	}
+	for _, p := range []string{"/api/sync/scopesentry/datasource", "/api/sync/scopesentry/sync", "/api/llm/profiles"} {
+		if !adminOnlyAPI(http.MethodPost, p) {
+			t.Errorf("mutation not protected: %s", p)
 		}
 	}
 }
@@ -162,21 +171,26 @@ func TestLogoutClearsHttpOnlyCookie(t *testing.T) {
 	}
 }
 
-func TestOAuthTransactionCap(t *testing.T) {
+func TestOAuthTransactionPerClientRateLimit(t *testing.T) {
 	t.Setenv("ARTEX_GOOGLE_CLIENT_ID", "id")
 	t.Setenv("ARTEX_GOOGLE_CLIENT_SECRET", "secret")
 	t.Setenv("ARTEX_GOOGLE_REDIRECT_URL", "https://artex.example/api/auth/google/callback")
 	oauthTransactions.Lock()
 	old := oauthTransactions.m
-	oauthTransactions.m = make(map[string]oauthTransaction, 1024)
-	for i := 0; i < 1024; i++ {
-		oauthTransactions.m[fmt.Sprint(i)] = oauthTransaction{expires: time.Now().Add(time.Minute)}
+	oauthTransactions.m = make(map[string]oauthTransaction, 10)
+	for i := 0; i < 10; i++ {
+		oauthTransactions.m[string(rune('a'+i))] = oauthTransaction{client: "192.0.2.1", created: time.Now(), expires: time.Now().Add(time.Minute)}
 	}
 	oauthTransactions.Unlock()
 	defer func() { oauthTransactions.Lock(); oauthTransactions.m = old; oauthTransactions.Unlock() }()
 	w := httptest.NewRecorder()
-	(&Server{}).authGoogleStart(w, httptest.NewRequest(http.MethodGet, "/api/auth/google", nil))
+	r := httptest.NewRequest(http.MethodGet, "/api/auth/google", nil)
+	r.RemoteAddr = "192.0.2.1:1234"
+	(&Server{}).authGoogleStart(w, r)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status=%d", w.Code)
+	}
+	if w.Header().Get("Retry-After") != "60" {
+		t.Fatalf("Retry-After=%q", w.Header().Get("Retry-After"))
 	}
 }
