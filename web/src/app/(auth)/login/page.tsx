@@ -25,6 +25,7 @@ export default function LoginPage() {
   const [agreed, setAgreed] = useState(false);
   const [termsOpen, setTermsOpen] = useState(false);
   const [readToEnd, setReadToEnd] = useState(false);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
   const termsBodyRef = useRef<HTMLDivElement>(null);
 
   // 滚动到条款底部（含无需滚动即可完整展示的情况）方可点击「同意」。
@@ -35,6 +36,9 @@ export default function LoginPage() {
   }
 
   useEffect(() => {
+    const oauth = new URLSearchParams(window.location.search).get("oauth");
+    if (oauth === "pending") setError("Google 계정이 등록되었습니다. 관리자 승인을 기다려 주세요.");
+    else if (oauth) setError("Google 로그인에 실패했습니다. 다시 시도해 주세요.");
     if (!termsOpen) return;
     // 打开时重置，并处理内容本就不足一屏、无法触发滚动的场景。
     setReadToEnd(false);
@@ -54,8 +58,9 @@ export default function LoginPage() {
     }
     api
       .authStatus()
-      .then(({ initialized }) => {
-        if (!initialized) router.replace("/setup");
+      .then(({ initialized, google_oauth_enabled }) => {
+        setGoogleEnabled(google_oauth_enabled);
+        if (!initialized && !google_oauth_enabled) router.replace("/setup");
       })
       .catch(() => setError(t("login.errorBackend")))
       .finally(() => setChecking(false));
@@ -150,6 +155,26 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading || !password || !agreed}>
               {loading ? t("login.submitting") : t("login.submit")}
             </Button>
+            {googleEnabled && (
+              <>
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="h-px flex-1 bg-border" />
+                  또는
+                  <span className="h-px flex-1 bg-border" />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={!agreed}
+                  onClick={() => {
+                    window.location.href = "/api/auth/google";
+                  }}
+                >
+                  Google로 로그인
+                </Button>
+              </>
+            )}
           </form>
         </div>
       </div>

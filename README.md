@@ -132,6 +132,28 @@ docker compose up -d --build  # 한국어판 이미지 빌드 후 PostgreSQL 과
 
 **LLM:** `export ANTHROPIC_API_KEY=sk-...`(또는 `OPENAI_API_KEY`), 혹은 UI 의 "LLM 설정" 페이지에서 입력합니다. 선택 환경 변수로 `ARTEX_LLM_PROVIDER` / `ARTEX_LLM_MODEL` / `ARTEX_LLM_BASE_URL` / `ARTEX_LLM_PROXY` 를 둘 수 있습니다. 국산·오픈 모델을 쓰려면 OpenAI 호환 `ARTEX_LLM_BASE_URL` 을 지정하십시오.
 
+### Google OAuth 및 사용자 승인
+
+기존 `ARTEX` 관리자 비밀번호 로그인은 그대로 사용할 수 있습니다. Google 로그인을 함께 사용하려면 Google Cloud Console에서 OAuth 2.0 웹 클라이언트를 만들고 승인된 리디렉션 URI를 `https://<ARTEX 주소>/api/auth/google/callback`으로 정확히 등록한 뒤 다음 환경 변수를 설정하십시오.
+
+```dotenv
+ARTEX_GOOGLE_CLIENT_ID=...
+ARTEX_GOOGLE_CLIENT_SECRET=...
+ARTEX_GOOGLE_REDIRECT_URL=https://artex.example.com/api/auth/google/callback
+ARTEX_GOOGLE_HOSTED_DOMAIN=example.com
+ARTEX_GOOGLE_ADMIN_EMAILS=security-admin@example.com
+```
+
+- 앞의 세 값이 모두 있어야 Google 로그인 버튼이 활성화됩니다.
+- 공개 초기 설정 선점을 막기 위해 Google OAuth가 활성화되면 `/api/auth/init`은 닫힙니다. 로컬 비밀번호 로그인도 함께 쓸 신규 설치는 OAuth 환경 변수를 넣기 전에 먼저 로컬에서 관리자 비밀번호를 설정하십시오.
+- `ARTEX_GOOGLE_HOSTED_DOMAIN`은 선택 사항이며, 설정하면 해당 Google Workspace의 검증된 `hd` claim만 허용합니다.
+- `ARTEX_GOOGLE_ADMIN_EMAILS`는 쉼표로 구분한 초기 관리자 allowlist입니다. 여기에 없는 신규 계정은 `pending`으로 등록되며 기존 관리자에게 승인받기 전까지 API를 사용할 수 없습니다.
+- 관리자는 **시스템 → 사용자 관리**에서 계정을 승인·중지할 수 있습니다. 승인/중지와 역할 변경은 다음 API 요청부터 즉시 적용됩니다.
+- 운영에서는 HTTPS를 사용하십시오. OAuth 세션은 URL이나 브라우저 저장소에 노출하지 않고 `HttpOnly; Secure; SameSite=Lax` 쿠키에 저장됩니다. 리버스 프록시를 사용해도 `ARTEX_GOOGLE_REDIRECT_URL`은 외부 공개 주소로 명시해야 합니다.
+- 현재 승인 사용자는 기존 ARTEX 데이터 공간을 공유합니다. 작업별 소유권과 사용자별 사용량 분리는 별도 멀티테넌시 기능이 필요합니다.
+
+OAuth client secret은 저장소에 커밋하지 말고 Docker secret 또는 접근 권한을 제한한 환경 파일로 주입하십시오.
+
 **동시성:** 작업마다 돌리는 worker 에이전트 수는 "시스템 설정"에서 조정합니다(기본값 3).
 
 **자주 쓰는 인자:** `./start.sh -addr :8787 -proxy :8788` — `-addr` 는 프런트엔드와 API, `-proxy` 는 트래픽 기록 프록시 포트입니다.

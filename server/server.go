@@ -728,6 +728,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/init", s.authInit)
 	mux.HandleFunc("POST /api/auth/login", s.authLogin)
 	mux.HandleFunc("POST /api/auth/change-password", s.authChangePassword)
+	mux.HandleFunc("GET /api/auth/google", s.authGoogleStart)
+	mux.HandleFunc("GET /api/auth/google/callback", s.authGoogleCallback)
+	mux.HandleFunc("GET /api/auth/me", s.authMe)
+	mux.HandleFunc("GET /api/auth/admin/users", s.authAdminUsers)
+	mux.HandleFunc("PATCH /api/auth/admin/users/{id}", s.authAdminUpdateUser)
 
 	mux.HandleFunc("GET /api/health", s.health)
 	mux.HandleFunc("GET /api/stats", s.stats)

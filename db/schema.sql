@@ -1384,3 +1384,21 @@ CREATE INDEX IF NOT EXISTS idx_notification_deliveries_batch
     ON notification_deliveries(batch_id) WHERE batch_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notification_deliveries_channel
     ON notification_deliveries(channel_id, id DESC);
+-- Google OAuth users. Existing password-only installations remain compatible:
+-- the legacy ARTEX account is represented by JWT claims and does not require a row.
+CREATE TABLE IF NOT EXISTS auth_users (
+    id            BIGSERIAL PRIMARY KEY,
+    provider      TEXT NOT NULL DEFAULT 'google' CHECK (provider IN ('google')),
+    provider_id   TEXT NOT NULL,
+    email         TEXT NOT NULL,
+    name          TEXT NOT NULL DEFAULT '',
+    avatar_url    TEXT NOT NULL DEFAULT '',
+    role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin','user')),
+    status        TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','disabled')),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_login_at TIMESTAMPTZ,
+    UNIQUE(provider, provider_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_auth_users_email_lower ON auth_users(lower(email));
+CREATE INDEX IF NOT EXISTS idx_auth_users_status ON auth_users(status, created_at DESC);

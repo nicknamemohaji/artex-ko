@@ -105,6 +105,18 @@ import type {
   WorkspaceListing,
 } from "@/lib/types";
 
+export interface AuthUser {
+  id: number;
+  provider: string;
+  email: string;
+  name: string;
+  avatar_url: string;
+  role: "admin" | "user";
+  status: "pending" | "approved" | "disabled";
+  created_at: string;
+  last_login_at?: string;
+}
+
 function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("artex_token");
@@ -236,11 +248,15 @@ export const api = {
   health: () => get<{ ok: boolean; service: string; version: string }>("/health"),
 
   // ---- auth ----
-  authStatus: () => get<{ initialized: boolean }>("/auth/status"),
+  authStatus: () => get<{ initialized: boolean; google_oauth_enabled: boolean }>("/auth/status"),
+  authMe: () => get<{ subject: string; email: string; role: "admin" | "user"; user_id: number }>("/auth/me"),
   login: (username: string, password: string) => post<{ token: string }>("/auth/login", { username, password }),
   initPassword: (password: string) => post<{ token: string }>("/auth/init", { password }),
   changePassword: (oldPassword: string, newPassword: string) =>
     post<{ ok: boolean }>("/auth/change-password", { old_password: oldPassword, new_password: newPassword }),
+  authUsers: () => get<{ users: AuthUser[] }>("/auth/admin/users"),
+  updateAuthUser: (id: number, status: AuthUser["status"], role: AuthUser["role"]) =>
+    patch<AuthUser>(`/auth/admin/users/${id}`, { status, role }),
 
   // ---- tasks ----
   tasks: () =>
