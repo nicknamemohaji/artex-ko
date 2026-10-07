@@ -160,6 +160,7 @@
       "chat": "대화",
       "commands": "도구 실행",
       "dashboard": "대시보드",
+      "egress-logs": "아웃바운드 로그",
       "findings": "취약점",
       "intercept": "가로채기 규칙",
       "llm": "LLM",

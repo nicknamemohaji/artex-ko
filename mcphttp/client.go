@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -101,10 +102,11 @@ func New(ctx context.Context, server, url string, headers map[string]string, ins
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{Timeout: 120 * time.Second}
-	if insecure {
-		hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	transport, err := transportFromEnv(insecure)
+	if err != nil {
+		return nil, err
 	}
+	hc := &http.Client{Timeout: 120 * time.Second, Transport: transport}
 	c := &Client{
 		server:   server,
 		url:      url,
@@ -126,10 +128,11 @@ func NewSSE(ctx context.Context, server, sseURL string, headers map[string]strin
 	if err != nil {
 		return nil, err
 	}
-	hc := &http.Client{} // the SSE stream is intentionally long-lived.
-	if insecure {
-		hc.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+	transport, err := transportFromEnv(insecure)
+	if err != nil {
+		return nil, err
 	}
+	hc := &http.Client{Transport: transport} // the SSE stream is intentionally long-lived.
 	streamCtx, cancel := context.WithCancel(context.Background())
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodGet, sseURL, nil)
 	if err != nil {
@@ -177,6 +180,25 @@ func NewSSE(ctx context.Context, server, sseURL string, headers map[string]strin
 		return nil, err
 	}
 	return c, nil
+}
+
+// transportFromEnv wires only MCP HTTP transports to the audited proxy. It is
+// deliberately separate from HTTP_PROXY: globally proxying the process can turn
+// destination-address SSRF checks into checks of the proxy address instead.
+func transportFromEnv(insecure bool) (*http.Transport, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: insecure} //nolint:gosec -- persisted MCP option
+	raw := strings.TrimSpace(os.Getenv("ARTEX_MCP_PROXY"))
+	if raw == "" {
+		transport.Proxy = nil
+		return transport, nil
+	}
+	proxyURL, err := url.Parse(raw)
+	if err != nil || proxyURL.Host == "" || (proxyURL.Scheme != "http" && proxyURL.Scheme != "https") {
+		return nil, fmt.Errorf("invalid ARTEX_MCP_PROXY %q", raw)
+	}
+	transport.Proxy = http.ProxyURL(proxyURL)
+	return transport, nil
 }
 
 func readSSEEndpoint(r *bufio.Reader, base string) (string, error) {

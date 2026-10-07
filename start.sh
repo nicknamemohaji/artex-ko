@@ -20,6 +20,20 @@ set -u
 
 cd "$(dirname "$0")" || exit 1
 
+# A recording proxy uses a private CA. Keep the OS roots as well as that CA:
+# pointing SSL_CERT_FILE at only the proxy CA would make every direct HTTPS
+# client fail. The source volume is read-only; the combined bundle is ephemeral.
+if [ -n "${ARTEX_EGRESS_CA:-}" ] && [ -s "$ARTEX_EGRESS_CA" ]; then
+	SYSTEM_CA=/etc/ssl/certs/ca-certificates.crt
+	COMBINED_CA=/tmp/artex-ca-bundle.pem
+	if [ -s "$SYSTEM_CA" ]; then
+		(umask 077 && { sed -n '1,$p' "$SYSTEM_CA"; sed -n '1,$p' "$ARTEX_EGRESS_CA"; } > "$COMBINED_CA") || exit 1
+	else
+		(umask 077 && sed -n '1,$p' "$ARTEX_EGRESS_CA" > "$COMBINED_CA") || exit 1
+	fi
+	export SSL_CERT_FILE="$COMBINED_CA"
+fi
+
 BIN=./artex
 [ -x "$BIN" ] || { echo "[artex] 실행 파일을 찾을 수 없습니다: $BIN" >&2; exit 1; }
 

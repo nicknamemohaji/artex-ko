@@ -160,6 +160,7 @@
       "chat": "对话",
       "commands": "工具执行",
       "dashboard": "仪表盘",
+      "egress-logs": "出口日志",
       "findings": "发现",
       "intercept": "拦截规则",
       "llm": "LLM",
