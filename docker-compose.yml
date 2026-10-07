@@ -5,14 +5,7 @@ services:
     image: mitmproxy/mitmproxy@sha256:836cc23dd3dd1bfc1a8ca199df7a4c39ba136cb08a7c58b8f633149a80caa183
     command:
       - sh
-      - -c
-      - |
-        mitmdump --listen-host 0.0.0.0 --listen-port 8080 --set block_global=false --set stream_large_bodies=1m -s /opt/artex/addon.py &
-        proxy_pid=$$!
-        while [ ! -s /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem ]; do sleep 0.2; done
-        cp /home/mitmproxy/.mitmproxy/mitmproxy-ca-cert.pem /shared-ca/mitmproxy-ca-cert.pem
-        chmod 0444 /shared-ca/mitmproxy-ca-cert.pem
-        wait $$proxy_pid
+      - /opt/artex/start-proxy.sh
     environment:
       ARTEX_EGRESS_LOG_DIR: /var/log/artex-egress
       ARTEX_EGRESS_BODY_LIMIT: ${ARTEX_EGRESS_BODY_LIMIT:-0}
@@ -20,11 +13,12 @@ services:
       ARTEX_EGRESS_LOG_BACKUPS: ${ARTEX_EGRESS_LOG_BACKUPS:-10}
     volumes:
       - ./ops/egress-proxy/addon.py:/opt/artex/addon.py:ro
+      - ./ops/egress-proxy/start-proxy.sh:/opt/artex/start-proxy.sh:ro
       - ./data/egress-proxy/logs:/var/log/artex-egress
       - egress_proxy_ca:/home/mitmproxy/.mitmproxy
       - egress_proxy_public_ca:/shared-ca
     healthcheck:
-      test: ["CMD-SHELL", "test -s /shared-ca/mitmproxy-ca-cert.pem"]
+      test: ["CMD-SHELL", "test -f /shared-ca/ready && test -s /shared-ca/mitmproxy-ca-cert.pem"]
       interval: 2s
       timeout: 2s
       retries: 20

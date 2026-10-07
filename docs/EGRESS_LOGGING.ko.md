@@ -15,7 +15,7 @@ docker compose up -d --build
 docker compose ps
 ```
 
-프록시 이미지는 mitmproxy 11.0.2의 linux/amd64 manifest digest로 고정돼 있다. 다른 CPU 아키텍처에서 배포할 때는 같은 버전의 해당 플랫폼 digest를 검증해 교체해야 한다. 프록시는 CA 파일을 만든 뒤에만 healthy가 되고 ARTEX가 시작된다. ARTEX 시작 스크립트는 OS 신뢰 저장소와 이 CA를 임시 번들로 결합한다.
+프록시 이미지는 mitmproxy 11.0.2의 linux/amd64 manifest digest로 고정돼 있다. 다른 CPU 아키텍처에서 배포할 때는 같은 버전의 해당 플랫폼 digest를 검증해 교체해야 한다. 프록시는 시작할 때 이전 공개 인증서와 준비 표식을 제거하고, 새 인증서를 제한 시간 안에 원자적으로 공개한 뒤에만 healthy가 된다. ARTEX 시작 스크립트는 OS 신뢰 저장소와 이 CA를 임시 번들로 결합한다.
 
 로그는 기본 50 MiB 파일 10개까지 순환한다. 환경변수로 조정할 수 있다.
 
@@ -25,7 +25,7 @@ docker compose ps
 
 Authorization, Proxy-Authorization, Cookie, Set-Cookie, API key 계열 헤더와 민감한 쿼리 필드는 저장 전에 마스킹한다. 본문 기록을 켜면 JSON·SSE JSON의 민감한 키, bearer 및 `sk-` 계열 토큰, PEM private key를 마스킹하고 바이너리 본문은 저장하지 않는다. 임의 형식 본문의 모든 비밀값을 완벽하게 식별할 수는 없으므로 로그 디렉터리와 대시보드는 관리자 데이터로 취급해야 한다.
 
-SSE 응답은 원본 chunk를 그대로 반환하면서 제한된 복사본만 기록한다. 로그 기록 실패나 디스크 부족은 요청 전달을 중단하지 않는 fail-open 정책이다. 따라서 로그 누락 알림과 디스크 모니터링을 별도로 구성해야 한다.
+SSE 응답은 원본 chunk를 그대로 반환하며 헤더와 누적 바이트 수만 기록한다. 비밀값이 임의의 chunk 경계를 넘을 수 있으므로 본문 기록을 활성화해도 SSE 본문은 저장하지 않는다. 로그 기록 실패나 디스크 부족은 요청 전달을 중단하지 않는 fail-open 정책이다. 따라서 로그 누락 알림과 디스크 모니터링을 별도로 구성해야 한다.
 
 ## 캡처 범위와 강제 경계
 

@@ -14,7 +14,7 @@ from logging.handlers import RotatingFileHandler
 
 from mitmproxy import http
 
-BODY_LIMIT = max(0, int(os.getenv("ARTEX_EGRESS_BODY_LIMIT", "65536")))
+BODY_LIMIT = max(0, int(os.getenv("ARTEX_EGRESS_BODY_LIMIT", "0")))
 LOG_DIR = os.getenv("ARTEX_EGRESS_LOG_DIR", "/var/log/artex-egress")
 SENSITIVE = re.compile(r"(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|token|secret|password|passwd)")
 INLINE_SECRET = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}|((?:api[-_]?key|token|secret|password)\s*[:=]\s*[\"']?)[^\s,\"'}]{4,}")
@@ -111,15 +111,14 @@ def responseheaders(flow: http.HTTPFlow):
 
     _write({"event": "response_headers", "id": flow.id, "status": flow.response.status_code,
             "headers": _headers(flow.response.headers), "sse": True})
-    total = 0
+    flow.metadata["artex_sse_bytes"] = 0
 
     def stream(chunk: bytes):
-        nonlocal total
-        if chunk and total < BODY_LIMIT:
-            keep = chunk[: BODY_LIMIT - total]
-            total += len(keep)
-            _write({"event": "response_chunk", "id": flow.id, "sse": True, "body": _body(keep),
-                    "truncated": len(chunk) > len(keep)})
+        # Never persist SSE bodies. Secrets can cross arbitrary transport chunk
+        # boundaries, so per-chunk redaction cannot be made safe. Byte counts
+        # retain availability/volume diagnostics without recording content.
+        if chunk:
+            flow.metadata["artex_sse_bytes"] = flow.metadata.get("artex_sse_bytes", 0) + len(chunk)
         return chunk
 
     flow.response.stream = stream
@@ -127,7 +126,8 @@ def responseheaders(flow: http.HTTPFlow):
 
 def response(flow: http.HTTPFlow):
     if "text/event-stream" in flow.response.headers.get("content-type", "").lower():
-        _write({"event": "response_end", "id": flow.id, "sse": True})
+        _write({"event": "response_end", "id": flow.id, "sse": True,
+                "bytes": flow.metadata.get("artex_sse_bytes", 0)})
         return
     _write({"event": "response", "id": flow.id, "status": flow.response.status_code,
             "headers": _headers(flow.response.headers), "body": _body(flow.response.raw_content)})
