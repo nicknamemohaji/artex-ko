@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -134,5 +136,66 @@ func TestRegularUserCannotUseAdminAPI(t *testing.T) {
 	}
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status=%d", w.Code)
+	}
+}
+
+func TestAdminOnlyAPIBoundaries(t *testing.T) {
+	for _, p := range []string{"/api/update/check", "/api/llm", "/api/llm/profiles/active", "/api/settings", "/api/agents/x", "/api/triggers/1", "/api/tools", "/api/mcp", "/api/intercept/rules", "/api/intercept/judge", "/api/skills", "/api/logs/stream"} {
+		if !adminOnlyAPI(http.MethodGet, p) {
+			t.Errorf("not protected: %s", p)
+		}
+	}
+	for _, p := range []string{"/api/tasks", "/api/chat", "/api/assets", "/api/intercept/pending", "/api/intercept/pending/1", "/api/intercept/history", "/api/llm/profiles"} {
+		if adminOnlyAPI(http.MethodGet, p) {
+			t.Errorf("unexpected admin-only: %s", p)
+		}
+	}
+	for _, p := range []string{"/api/intercept/pending/1/decide", "/api/sync/scopesentry/projects"} {
+		if adminOnlyAPI(http.MethodPost, p) {
+			t.Errorf("approved-user flow blocked: %s", p)
+		}
+	}
+	for _, p := range []string{"/api/sync/scopesentry/datasource", "/api/sync/scopesentry/sync", "/api/llm/profiles"} {
+		if !adminOnlyAPI(http.MethodPost, p) {
+			t.Errorf("mutation not protected: %s", p)
+		}
+	}
+}
+
+func TestLogoutClearsHttpOnlyCookie(t *testing.T) {
+	t.Setenv("ARTEX_GOOGLE_REDIRECT_URL", "https://artex.example/api/auth/google/callback")
+	w := httptest.NewRecorder()
+	(&Server{}).authLogout(w, httptest.NewRequest(http.MethodPost, "/api/auth/logout", nil))
+	c := w.Result().Cookies()[0]
+	if c.Name != "artex_token" || c.MaxAge != -1 || !c.HttpOnly || !c.Secure || c.Path != "/" {
+		t.Fatalf("cookie=%#v", c)
+	}
+}
+
+func TestOAuthTransactionGlobalCapEvictsOldest(t *testing.T) {
+	t.Setenv("ARTEX_GOOGLE_CLIENT_ID", "id")
+	t.Setenv("ARTEX_GOOGLE_CLIENT_SECRET", "secret")
+	t.Setenv("ARTEX_GOOGLE_REDIRECT_URL", "https://artex.example/api/auth/google/callback")
+	oauthTransactions.Lock()
+	old := oauthTransactions.m
+	oauthTransactions.m = make(map[string]oauthTransaction, 1024)
+	for i := 0; i < 1024; i++ {
+		oauthTransactions.m[fmt.Sprint(i)] = oauthTransaction{created: time.Now().Add(time.Duration(i) * time.Second), expires: time.Now().Add(time.Hour)}
+	}
+	oauthTransactions.Unlock()
+	defer func() { oauthTransactions.Lock(); oauthTransactions.m = old; oauthTransactions.Unlock() }()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/auth/google", nil)
+	(&Server{}).authGoogleStart(w, r)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status=%d", w.Code)
+	}
+	oauthTransactions.Lock()
+	defer oauthTransactions.Unlock()
+	if len(oauthTransactions.m) != 1024 {
+		t.Fatalf("transactions=%d", len(oauthTransactions.m))
+	}
+	if _, exists := oauthTransactions.m["0"]; exists {
+		t.Fatal("oldest transaction was not evicted")
 	}
 }

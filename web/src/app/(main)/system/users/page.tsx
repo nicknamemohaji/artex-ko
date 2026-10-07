@@ -20,7 +20,7 @@ export default function UsersPage() {
     [],
   );
   React.useEffect(() => {
-    load();
+    void load();
   }, [load]);
   async function update(u: AuthUser, status: AuthUser["status"]) {
     try {

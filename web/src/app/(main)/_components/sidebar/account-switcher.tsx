@@ -33,9 +33,13 @@ export function AccountSwitcher({
   const [activeUser, setActiveUser] = useState(users[0]);
   const [pwOpen, setPwOpen] = useState(false);
 
-  function handleLogout() {
-    auth.clearToken();
-    window.location.href = "/login";
+  async function handleLogout() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      auth.clearToken();
+      window.location.href = "/login";
+    }
   }
 
   if (!activeUser) {
@@ -84,7 +88,7 @@ export function AccountSwitcher({
             <KeyRound />
             {t("changePassword")}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+          <DropdownMenuItem onClick={() => void handleLogout()} className="text-destructive focus:text-destructive">
             <LogOut />
             {t("logout")}
           </DropdownMenuItem>

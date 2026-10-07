@@ -261,6 +261,7 @@ export const api = {
   // ---- auth ----
   authStatus: () => get<{ initialized: boolean; google_oauth_enabled: boolean }>("/auth/status"),
   authMe: () => get<{ subject: string; email: string; role: "admin" | "user"; user_id: number }>("/auth/me"),
+  logout: () => post<{ ok: boolean }>("/auth/logout"),
   login: (username: string, password: string) => post<{ token: string }>("/auth/login", { username, password }),
   initPassword: (password: string) => post<{ token: string }>("/auth/init", { password }),
   changePassword: (oldPassword: string, newPassword: string) =>

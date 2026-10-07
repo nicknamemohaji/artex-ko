@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Autumn-27/artex/db"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -60,8 +62,8 @@ type authClaims struct {
 }
 
 type oauthTransaction struct {
-	verifier, nonce string
-	expires         time.Time
+	verifier, nonce  string
+	created, expires time.Time
 }
 
 var oauthTransactions = struct {
@@ -217,8 +219,34 @@ func (s *Server) requireAuth(h http.Handler) http.Handler {
 			claims.Role = u.Role
 		}
 		r = r.WithContext(context.WithValue(r.Context(), authClaimsContextKey{}, claims))
+		if adminOnlyAPI(r.Method, p) && !s.requireAdmin(w, r) {
+			return
+		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+func adminOnlyAPI(method, path string) bool {
+	for _, prefix := range []string{"/api/update", "/api/settings", "/api/agents", "/api/triggers", "/api/tools", "/api/mcp", "/api/asset-intercept", "/api/skills", "/api/visibility", "/api/notify", "/api/logs", "/api/commands", "/api/audit", "/api/gc"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	if path == "/api/llm/profiles" && method == http.MethodGet {
+		return false
+	}
+	if path == "/api/llm" || strings.HasPrefix(path, "/api/llm/") {
+		return true
+	}
+	for _, prefix := range []string{"/api/intercept/rules", "/api/intercept/tool-config", "/api/intercept/judge"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	if method != http.MethodGet && (path == "/api/sync/scopesentry/datasource" || path == "/api/sync/scopesentry/sync") {
+		return true
+	}
+	return false
 }
 
 type authClaimsContextKey struct{}
@@ -357,7 +385,20 @@ func (s *Server) authGoogleStart(w http.ResponseWriter, r *http.Request) {
 			delete(oauthTransactions.m, k)
 		}
 	}
-	oauthTransactions.m[state] = oauthTransaction{verifier, nonce, now.Add(10 * time.Minute)}
+	if old, cookieErr := r.Cookie("artex_oauth_state"); cookieErr == nil {
+		delete(oauthTransactions.m, old.Value)
+	}
+	if len(oauthTransactions.m) >= 1024 {
+		var oldestKey string
+		var oldest time.Time
+		for key, tx := range oauthTransactions.m {
+			if oldestKey == "" || tx.created.Before(oldest) {
+				oldestKey, oldest = key, tx.created
+			}
+		}
+		delete(oauthTransactions.m, oldestKey)
+	}
+	oauthTransactions.m[state] = oauthTransaction{verifier: verifier, nonce: nonce, created: now, expires: now.Add(10 * time.Minute)}
 	oauthTransactions.Unlock()
 	http.SetCookie(w, &http.Cookie{Name: "artex_oauth_state", Value: state, Path: "/api/auth/google/callback", MaxAge: 600, HttpOnly: true, Secure: strings.HasPrefix(strings.ToLower(c.redirectURL), "https://"), SameSite: http.SameSiteLaxMode})
 	sum := sha256.Sum256([]byte(verifier))
@@ -476,7 +517,11 @@ func (s *Server) authGoogleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c.adminEmails[strings.ToLower(u.Email)] && u.Status == "pending" {
-		u, _ = s.m.PG().UpdateAuthUserAccess(u.ID, "approved", "admin")
+		u, err = s.m.PG().UpdateAuthUserAccess(u.ID, "approved", "admin")
+		if err != nil || u == nil {
+			http.Redirect(w, r, "/login?oauth=save_failed", 302)
+			return
+		}
 	}
 	if u.Status != "approved" {
 		http.Redirect(w, r, "/login?oauth=pending", 302)
@@ -511,6 +556,11 @@ func (s *Server) authMe(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"subject": c.Subject, "email": c.Email, "role": c.Role, "user_id": c.UserID})
 }
+func (s *Server) authLogout(w http.ResponseWriter, r *http.Request) {
+	secure := strings.HasPrefix(strings.ToLower(loadGoogleOAuthConfig().redirectURL), "https://")
+	http.SetCookie(w, &http.Cookie{Name: "artex_token", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
 func (s *Server) authAdminUsers(w http.ResponseWriter, r *http.Request) {
 	if !s.requireAdmin(w, r) {
 		return
@@ -536,8 +586,17 @@ func (s *Server) authAdminUpdateUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, authErrBadRequest)
 		return
 	}
+	claims, _ := parseJWT(extractToken(r), s.jwtKey)
+	if claims != nil && claims.UserID == id && (q.Status != "approved" || q.Role != "admin") {
+		writeErr(w, http.StatusConflict, "자기 자신의 관리자 권한이나 사용 상태를 해제할 수 없습니다")
+		return
+	}
 	u, err := s.m.PG().UpdateAuthUserAccess(id, q.Status, q.Role)
 	if err != nil {
+		if errors.Is(err, db.ErrLastApprovedAdmin) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

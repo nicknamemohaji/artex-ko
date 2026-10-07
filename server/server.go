@@ -731,6 +731,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/google", s.authGoogleStart)
 	mux.HandleFunc("GET /api/auth/google/callback", s.authGoogleCallback)
 	mux.HandleFunc("GET /api/auth/me", s.authMe)
+	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 	mux.HandleFunc("GET /api/auth/admin/users", s.authAdminUsers)
 	mux.HandleFunc("PATCH /api/auth/admin/users/{id}", s.authAdminUpdateUser)
 

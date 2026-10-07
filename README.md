@@ -154,6 +154,8 @@ ARTEX_GOOGLE_ADMIN_EMAILS=security-admin@example.com
 
 OAuth client secret은 저장소에 커밋하지 말고 Docker secret 또는 접근 권한을 제한한 환경 파일로 주입하십시오.
 
+로그인 요청 속도 제한은 실제 클라이언트 IP를 확인할 수 있는 Nginx 등 신뢰된 리버스 프록시에서 적용하십시오. ARTEX는 임의의 `X-Forwarded-For`를 신뢰하지 않으며, 앱 내부에서는 만료 transaction 정리, 동일 state 쿠키 교체, 전역 1,024개 제한에서 가장 오래된 항목 제거만 수행합니다.
+
 **동시성:** 작업마다 돌리는 worker 에이전트 수는 "시스템 설정"에서 조정합니다(기본값 3).
 
 **자주 쓰는 인자:** `./start.sh -addr :8787 -proxy :8788` — `-addr` 는 프런트엔드와 API, `-proxy` 는 트래픽 기록 프록시 포트입니다.
