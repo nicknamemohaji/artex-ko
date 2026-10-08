@@ -19,8 +19,18 @@ type EgressRow = {
   status?: number;
   sse?: boolean;
   error?: string;
-  body?: { text?: string; base64?: string; truncated?: boolean } | null;
+  body?: { text?: string; base64?: string; truncated?: boolean; data?: unknown } | null;
 };
+
+function bodyPreview(body: EgressRow["body"]): string {
+  if (!body) return "-";
+  if (body.text) return body.text.slice(0, 1000);
+  if (body.base64) return "[바이너리/base64]";
+  if (body.data !== undefined) {
+    return (typeof body.data === "string" ? body.data : JSON.stringify(body.data, null, 2)).slice(0, 1000);
+  }
+  return JSON.stringify(body, null, 2).slice(0, 1000);
+}
 
 export default function EgressLogsPage() {
   const [items, setItems] = React.useState<EgressRow[]>([]);
@@ -101,7 +111,7 @@ export default function EgressLogsPage() {
                 </td>
                 <td className="py-3">{row.status ?? row.error ?? "-"}</td>
                 <td className="max-w-md whitespace-pre-wrap break-all py-3 font-mono text-xs">
-                  {row.body?.text?.slice(0, 1000) ?? (row.body?.base64 ? "[바이너리/base64]" : "-")}
+                  {bodyPreview(row.body)}
                   {row.body?.truncated ? " …" : ""}
                 </td>
               </tr>

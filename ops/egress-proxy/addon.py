@@ -15,6 +15,8 @@ from logging.handlers import RotatingFileHandler
 from mitmproxy import http
 
 BODY_LIMIT = max(0, int(os.getenv("ARTEX_EGRESS_BODY_LIMIT", "0")))
+SSE_BODY_LIMIT = max(0, int(os.getenv("ARTEX_EGRESS_SSE_BODY_LIMIT", "4194304")))
+SSE_EVENT_LIMIT = max(1024, int(os.getenv("ARTEX_EGRESS_SSE_EVENT_LIMIT", "65536")))
 LOG_DIR = os.getenv("ARTEX_EGRESS_LOG_DIR", "/var/log/artex-egress")
 SENSITIVE = re.compile(r"(?i)(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api[-_]?key|token|secret|password|passwd)")
 INLINE_SECRET = re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}|((?:api[-_]?key|token|secret|password)\s*[:=]\s*[\"']?)[^\s,\"'}]{4,}")
@@ -50,10 +52,10 @@ def _safe_url(flow: http.HTTPFlow) -> str:
     return url
 
 
-def _body(raw: bytes | None):
-    if not raw or BODY_LIMIT == 0:
+def _body(raw: bytes | None, limit: int = BODY_LIMIT):
+    if not raw or limit == 0:
         return None
-    chunk = raw[:BODY_LIMIT]
+    chunk = raw[:limit]
     try:
         text = chunk.decode("utf-8")
         # Structured payloads get key-aware recursive redaction. The fallback
@@ -81,6 +83,50 @@ def _body(raw: bytes | None):
         return {"text": text, "truncated": len(raw) > len(chunk)}
     except UnicodeDecodeError:
         return {"binary_omitted": True, "length": len(raw), "truncated": len(raw) > len(chunk)}
+
+
+def _sse_body(raw: bytes):
+    """Parse one complete SSE event and redact its reconstructed data payload."""
+    clipped = raw[:SSE_EVENT_LIMIT]
+    try:
+        text = clipped.decode("utf-8")
+    except UnicodeDecodeError:
+        return {"binary_omitted": True, "length": len(raw), "truncated": len(raw) > len(clipped)}
+
+    fields = {"data": []}
+    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        if not line or line.startswith(":"):
+            continue
+        key, sep, value = line.partition(":")
+        if sep and value.startswith(" "):
+            value = value[1:]
+        if key == "data":
+            fields["data"].append(value)
+        elif key in ("event", "id", "retry"):
+            fields[key] = value
+
+    data = "\n".join(fields["data"])
+    redacted = _body(data.encode("utf-8"), SSE_EVENT_LIMIT)
+    result = {key: value for key, value in fields.items() if key != "data"}
+    result["data"] = redacted
+    result["length"] = len(raw)
+    result["truncated"] = len(raw) > len(clipped)
+    return result
+
+
+def _take_sse_events(buffer: bytes):
+    """Return complete SSE events plus the incomplete tail, across TCP chunks."""
+    events = []
+    while True:
+        lf = buffer.find(b"\n\n")
+        crlf = buffer.find(b"\r\n\r\n")
+        positions = [(lf, 2), (crlf, 4)]
+        positions = [(pos, width) for pos, width in positions if pos >= 0]
+        if not positions:
+            return events, buffer
+        pos, width = min(positions)
+        events.append(buffer[:pos])
+        buffer = buffer[pos + width:]
 
 
 def _write(event: dict):
@@ -112,13 +158,25 @@ def responseheaders(flow: http.HTTPFlow):
     _write({"event": "response_headers", "id": flow.id, "status": flow.response.status_code,
             "headers": _headers(flow.response.headers), "sse": True})
     flow.metadata["artex_sse_bytes"] = 0
+    flow.metadata["artex_sse_captured"] = 0
+    flow.metadata["artex_sse_buffer"] = b""
+    flow.metadata["artex_sse_truncated"] = False
 
     def stream(chunk: bytes):
-        # Never persist SSE bodies. Secrets can cross arbitrary transport chunk
-        # boundaries, so per-chunk redaction cannot be made safe. Byte counts
-        # retain availability/volume diagnostics without recording content.
         if chunk:
             flow.metadata["artex_sse_bytes"] = flow.metadata.get("artex_sse_bytes", 0) + len(chunk)
+            captured = flow.metadata.get("artex_sse_captured", 0)
+            remaining = max(0, SSE_BODY_LIMIT - captured)
+            accepted = chunk[:remaining]
+            flow.metadata["artex_sse_captured"] = captured + len(accepted)
+            if len(accepted) < len(chunk):
+                flow.metadata["artex_sse_truncated"] = True
+            buffer = flow.metadata.get("artex_sse_buffer", b"") + accepted
+            events, buffer = _take_sse_events(buffer)
+            flow.metadata["artex_sse_buffer"] = buffer
+            for event_body in events:
+                if event_body:
+                    _write({"event": "sse_event", "id": flow.id, "body": _sse_body(event_body)})
         return chunk
 
     flow.response.stream = stream
@@ -126,8 +184,13 @@ def responseheaders(flow: http.HTTPFlow):
 
 def response(flow: http.HTTPFlow):
     if "text/event-stream" in flow.response.headers.get("content-type", "").lower():
+        tail = flow.metadata.get("artex_sse_buffer", b"")
+        if tail:
+            _write({"event": "sse_event", "id": flow.id, "body": _sse_body(tail), "unterminated": True})
         _write({"event": "response_end", "id": flow.id, "sse": True,
-                "bytes": flow.metadata.get("artex_sse_bytes", 0)})
+                "bytes": flow.metadata.get("artex_sse_bytes", 0),
+                "captured_bytes": flow.metadata.get("artex_sse_captured", 0),
+                "truncated": flow.metadata.get("artex_sse_truncated", False)})
         return
     _write({"event": "response", "id": flow.id, "status": flow.response.status_code,
             "headers": _headers(flow.response.headers), "body": _body(flow.response.raw_content)})
